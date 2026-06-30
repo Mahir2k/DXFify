@@ -1,0 +1,5 @@
+outputs/
+samples/
+build/
+*.sh
+
