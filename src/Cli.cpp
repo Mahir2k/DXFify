@@ -26,7 +26,8 @@ Calibration options:
   --intrinsics <path.yaml>    Camera intrinsics (optional, for undistortion)
 
 Segmentation options:
-  --seg-method <otsu|sat|adaptive>  Segmentation method (default otsu)
+  --seg-method <gradient|otsu|sat|adaptive>
+                                      Segmentation method (default gradient)
   --min-object-mm2 <area>           Min object area in mm² (default 100)
 
 Vectorization options:
@@ -36,7 +37,7 @@ Vectorization options:
   --snap-right-angles        Snap near-90° corners to exact 90°
 
 Output / debug:
-  --debug <path>             Write annotated debug overlay image
+  --debug <path>             Write overlay plus raw/cleaned/filled masks
   --report <path>            Write JSON validation report
   --help                     Show this help
 
@@ -67,7 +68,8 @@ CliArgs parseCli(int argc, char** argv) {
         else if (s == "--intrinsics")      a.cfg.calib.intrinsicsPath   = need(i,s);
         else if (s == "--seg-method") {
             std::string m = need(i, "--seg-method");
-            if (m == "otsu")      a.cfg.seg.method = SegmentationConfig::Method::Otsu;
+            if (m == "gradient")  a.cfg.seg.method = SegmentationConfig::Method::Gradient;
+            else if (m == "otsu") a.cfg.seg.method = SegmentationConfig::Method::Otsu;
             else if (m == "sat")  a.cfg.seg.method = SegmentationConfig::Method::Saturation;
             else if (m == "adaptive") a.cfg.seg.method = SegmentationConfig::Method::Adaptive;
             else throw CliError("Unknown --seg-method: " + m);

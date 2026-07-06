@@ -23,6 +23,9 @@ struct SegmentationConfig {
 struct ContourSet {
   std::vector<std::vector<cv::Point>> outer;
   std::vector<std::vector<cv::Point>> holes;
+  cv::Mat rawMask;
+  cv::Mat cleanedMask;
+  cv::Mat filledMask;
 };
 
 ContourSet segmentObject(const cv::Mat &calibratedImage, double pixelsPerMm,

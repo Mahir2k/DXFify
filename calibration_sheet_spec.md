@@ -1,7 +1,7 @@
 # Calibration Sheet Specification
 
 ## Layout
-- **Sheet size**: A4 landscape (210 × 297 mm) printed at 1:1 scale.
+- **Sheet size**: A4 portrait (210 × 297 mm) printed at 1:1 scale.
 - **Margin**: 20 mm from each edge.
 - **Markers**: 4 ArUco markers from `DICT_4X4_50`, IDs 0, 1, 2, 3.
 - **Marker size**: 40 × 40 mm.
