@@ -6,23 +6,26 @@
 namespace dxfer {
 
 struct SegmentationConfig {
-    enum class Method { Otsu, Saturation, Adaptive, Gradient } method{Method::Gradient};
-    double  morphCloseKernelMm   = 1.0;
-    double  minObjectAreaMm      = 100.0;
-    int     blurKernelPx         = 5;
-    bool    returnHoles          = true;
-    
-    // Added: regions to ignore (ArUco markers) in calibrated image pixel coords
-    std::vector<cv::Rect> ignoreRegions; 
+  enum class Method {
+    Otsu,
+    Saturation,
+    Adaptive,
+    Gradient
+  } method{Method::Gradient};
+  double morphCloseKernelMm = 1.0;
+  double minObjectAreaMm = 100.0;
+  int blurKernelPx = 5;
+  bool returnHoles = true;
+
+  std::vector<cv::Rect> ignoreRegions;
 };
 
 struct ContourSet {
-    std::vector<std::vector<cv::Point>> outer;
-    std::vector<std::vector<cv::Point>> holes;
+  std::vector<std::vector<cv::Point>> outer;
+  std::vector<std::vector<cv::Point>> holes;
 };
 
-ContourSet segmentObject(const cv::Mat& calibratedImage,
-                         double pixelsPerMm,
-                         const SegmentationConfig& cfg);
+ContourSet segmentObject(const cv::Mat &calibratedImage, double pixelsPerMm,
+                         const SegmentationConfig &cfg);
 
 } // namespace dxfer

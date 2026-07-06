@@ -16,8 +16,24 @@ ContourSet segmentObject(const cv::Mat& img, double pxPerMm,
         cv::rectangle(tempImg, r, meanColor, cv::FILLED);
     }
 
+    // Erase the sheet boundary by painting a border around the image (first pass)
+    int borderPx = static_cast<int>(std::round(15.0 * pxPerMm));
+    if (borderPx > 0 && borderPx < tempImg.cols / 2 && borderPx < tempImg.rows / 2) {
+        cv::rectangle(tempImg, cv::Point(0, 0), cv::Point(tempImg.cols, borderPx), meanColor, cv::FILLED);
+        cv::rectangle(tempImg, cv::Point(0, tempImg.rows - borderPx), cv::Point(tempImg.cols, tempImg.rows), meanColor, cv::FILLED);
+        cv::rectangle(tempImg, cv::Point(0, 0), cv::Point(borderPx, tempImg.rows), meanColor, cv::FILLED);
+        cv::rectangle(tempImg, cv::Point(tempImg.cols - borderPx, 0), cv::Point(tempImg.cols, tempImg.rows), meanColor, cv::FILLED);
+    }
+
     cv::Mat gray;
     cv::cvtColor(tempImg, gray, cv::COLOR_BGR2GRAY);
+
+    // Apply Gaussian blur to smooth out texture and noise
+    if (cfg.blurKernelPx > 0) {
+        int ksize = cfg.blurKernelPx;
+        if (ksize % 2 == 0) ksize++;
+        cv::GaussianBlur(gray, gray, cv::Size(ksize, ksize), 0);
+    }
 
     // 2. Gradient-based segmentation (Ignores shadows & handles white objects)
     cv::Mat sx, sy, grad;
@@ -27,6 +43,15 @@ ContourSet segmentObject(const cv::Mat& img, double pxPerMm,
     
     cv::Mat grad8u;
     cv::normalize(grad, grad8u, 0, 255, cv::NORM_MINMAX, CV_8U);
+
+    // Directly zero out gradients at the borders of the image to ignore any edge artifacts
+    int borderPxGrad = static_cast<int>(std::round(18.0 * pxPerMm));
+    if (borderPxGrad > 0 && borderPxGrad < grad8u.cols / 2 && borderPxGrad < grad8u.rows / 2) {
+        grad8u(cv::Rect(0, 0, grad8u.cols, borderPxGrad)).setTo(0);
+        grad8u(cv::Rect(0, grad8u.rows - borderPxGrad, grad8u.cols, borderPxGrad)).setTo(0);
+        grad8u(cv::Rect(0, 0, borderPxGrad, grad8u.rows)).setTo(0);
+        grad8u(cv::Rect(grad8u.cols - borderPxGrad, 0, borderPxGrad, grad8u.rows)).setTo(0);
+    }
     
     // Otsu on the gradient image finds the sharp height-discontinuity edges
     cv::Mat mask;
@@ -67,14 +92,16 @@ ContourSet segmentObject(const cv::Mat& img, double pxPerMm,
     ContourSet out;
     for (size_t i = 0; i < finalContours.size(); i++) {
         if (finalHierarchy[i][3] == -1) {
-            out.outer.push_back(finalContours[i]);
-            if (!cfg.returnHoles) continue;
-            int child = finalHierarchy[i][2];
-            while (child != -1) {
-                if (cv::contourArea(finalContours[child]) >= minAreaPx * 0.05) {
-                    out.holes.push_back(finalContours[child]);
+            if (cv::contourArea(finalContours[i]) >= minAreaPx) {
+                out.outer.push_back(finalContours[i]);
+                if (!cfg.returnHoles) continue;
+                int child = finalHierarchy[i][2];
+                while (child != -1) {
+                    if (cv::contourArea(finalContours[child]) >= minAreaPx * 0.05) {
+                        out.holes.push_back(finalContours[child]);
+                    }
+                    child = finalHierarchy[child][0];
                 }
-                child = finalHierarchy[child][0];
             }
         }
     }

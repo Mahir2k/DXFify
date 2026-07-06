@@ -34,6 +34,30 @@ cv::Point2d fitLineAndIntersect(const std::vector<cv::Point>& pts1, const std::v
     return cv::Point2d(x1 + vx1 * t1, y1 + vy1 * t1);
 }
 
+// Fits a circle using linear least squares to a set of 2D points (in mm)
+bool fitCircle(const std::vector<Point2d>& pts, Point2d& center, double& radius) {
+    if (pts.size() < 3) return false;
+    cv::Mat X(pts.size(), 3, CV_64F);
+    cv::Mat Y(pts.size(), 1, CV_64F);
+    for (size_t i = 0; i < pts.size(); ++i) {
+        X.at<double>(i, 0) = pts[i].x;
+        X.at<double>(i, 1) = pts[i].y;
+        X.at<double>(i, 2) = 1.0;
+        Y.at<double>(i, 0) = pts[i].x * pts[i].x + pts[i].y * pts[i].y;
+    }
+    cv::Mat sol;
+    if (!cv::solve(X, Y, sol, cv::DECOMP_SVD)) return false;
+    double A = sol.at<double>(0);
+    double B = sol.at<double>(1);
+    double C = sol.at<double>(2);
+    center.x = A / 2.0;
+    center.y = B / 2.0;
+    double r2 = C + center.x * center.x + center.y * center.y;
+    if (r2 <= 0.0) return false;
+    radius = std::sqrt(r2);
+    return true;
+}
+
 } // namespace
 
 Polyline2d contourToPolyline(const std::vector<cv::Point>& contourPx,
@@ -70,20 +94,46 @@ Polyline2d contourToPolyline(const std::vector<cv::Point>& contourPx,
         int idx_prev = approxIdx[(i + approx.size() - 1) % approx.size()];
         int idx_next = approxIdx[(i + 1) % approx.size()];
 
-        std::vector<cv::Point> pts_prev, pts_next;
-        
-        // Extract points for previous segment
-        int p_start = idx_prev, p_end = idx_curr;
-        if (p_start > p_end) p_end += n;
-        for (int k = p_start; k <= p_end; ++k) pts_prev.push_back(contourPx[k % n]);
+        // Check the angle of turn to decide if this is a sharp corner
+        bool refine = false;
+        int prev_idx_in_approx = (i + approx.size() - 1) % approx.size();
+        int next_idx_in_approx = (i + 1) % approx.size();
+        cv::Point v1 = approx[i] - approx[prev_idx_in_approx];
+        cv::Point v2 = approx[next_idx_in_approx] - approx[i];
+        double l1 = std::hypot(v1.x, v1.y);
+        double l2 = std::hypot(v2.x, v2.y);
+        if (l1 > 1e-6 && l2 > 1e-6) {
+            double cosAng = (v1.x * v2.x + v1.y * v2.y) / (l1 * l2);
+            double angDeg = std::acos(std::clamp(cosAng, -1.0, 1.0)) * 180.0 / M_PI;
+            // If the turn is between 45 and 135 degrees, refine the sharp corner
+            if (angDeg >= 45.0 && angDeg <= 135.0) {
+                refine = true;
+            }
+        }
 
-        // Extract points for next segment
-        int n_start = idx_curr, n_end = idx_next;
-        if (n_start > n_end) n_end += n;
-        for (int k = n_start; k <= n_end; ++k) pts_next.push_back(contourPx[k % n]);
+        if (refine) {
+            std::vector<cv::Point> pts_prev, pts_next;
+            
+            // Extract points for previous segment
+            int p_start = idx_prev, p_end = idx_curr;
+            if (p_start > p_end) p_end += n;
+            for (int k = p_start; k <= p_end; ++k) pts_prev.push_back(contourPx[k % n]);
 
-        cv::Point2d refined = fitLineAndIntersect(pts_prev, pts_next);
-        pl.points.push_back({ refined.x / pxPerMm, refined.y / pxPerMm });
+            // Extract points for next segment
+            int n_start = idx_curr, n_end = idx_next;
+            if (n_start > n_end) n_end += n;
+            for (int k = n_start; k <= n_end; ++k) pts_next.push_back(contourPx[k % n]);
+
+            cv::Point2d refined = fitLineAndIntersect(pts_prev, pts_next);
+            double dist = std::hypot(refined.x - approx[i].x, refined.y - approx[i].y);
+            if (dist <= 10.0) {
+                pl.points.push_back({ refined.x / pxPerMm, refined.y / pxPerMm });
+            } else {
+                pl.points.push_back({ static_cast<double>(approx[i].x) / pxPerMm, static_cast<double>(approx[i].y) / pxPerMm });
+            }
+        } else {
+            pl.points.push_back({ static_cast<double>(approx[i].x) / pxPerMm, static_cast<double>(approx[i].y) / pxPerMm });
+        }
     }
 
     // Optional right-angle snapping
@@ -103,6 +153,56 @@ Polyline2d contourToPolyline(const std::vector<cv::Point>& contourPx,
                 double t = (c.x - b.x) * nx + (c.y - b.y) * ny;
                 c.x = b.x + nx * t;
                 c.y = b.y + ny * t;
+            }
+        }
+    }
+
+    // Optional Arc Fitting
+    if (cfg.fitArcs) {
+        pl.bulges.assign(pl.points.size(), 0.0);
+        for (size_t i = 0; i < pl.points.size(); ++i) {
+            size_t next_i = (i + 1) % pl.points.size();
+            int start_idx = approxIdx[i];
+            int end_idx = approxIdx[next_i];
+            if (start_idx > end_idx) end_idx += n;
+
+            std::vector<Point2d> segPts;
+            for (int k = start_idx; k <= end_idx; ++k) {
+                segPts.push_back({ contourPx[k % n].x / pxPerMm, contourPx[k % n].y / pxPerMm });
+            }
+
+            if (segPts.size() >= static_cast<size_t>(cfg.minArcPoints)) {
+                Point2d center;
+                double radius = 0.0;
+                if (fitCircle(segPts, center, radius)) {
+                    double maxRes = 0.0;
+                    for (const auto& pt : segPts) {
+                        double dist = std::hypot(pt.x - center.x, pt.y - center.y);
+                        maxRes = std::max(maxRes, std::abs(dist - radius));
+                    }
+
+                    if (maxRes <= cfg.arcFitToleranceMm) {
+                        const auto& P_start = pl.points[i];
+                        const auto& P_end = pl.points[next_i];
+                        double L = std::hypot(P_end.x - P_start.x, P_end.y - P_start.y);
+                        double d = std::hypot((P_start.x + P_end.x)/2.0 - center.x, (P_start.y + P_end.y)/2.0 - center.y);
+                        double h = radius - d;
+
+                        if (L > 1e-9 && h > 0.0 && (h / L) > 0.01) {
+                            double bulge = 2.0 * h / L;
+                            // Sign calculation
+                            const auto& P_mid = segPts[segPts.size() / 2];
+                            double v1x = P_end.x - P_start.x;
+                            double v1y = P_end.y - P_start.y;
+                            double v2x = P_mid.x - P_start.x;
+                            double v2y = P_mid.y - P_start.y;
+                            // Negative of image space cross product
+                            double cross = - (v1x * v2y - v1y * v2x);
+                            if (cross < 0.0) bulge = -bulge;
+                            pl.bulges[i] = bulge;
+                        }
+                    }
+                }
             }
         }
     }

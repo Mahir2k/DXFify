@@ -59,13 +59,15 @@ void DxfWriter::writeTables() {
 void DxfWriter::writeLWPolyline(const Polyline2d& pl, const char* layer) {
     if (pl.points.empty()) return;
     writePair(0, "LWPOLYLINE");
+    writePair(100, "AcDbEntity");
     writePair(8, layer);
+    writePair(100, "AcDbPolyline");
     writePair(90, static_cast<int>(pl.points.size()));
-    writePair(70, (pl.closed ? 1 : 0) | (pl.bulges.empty() ? 0 : 1));
+    writePair(70, pl.closed ? 1 : 0);
     for (size_t i = 0; i < pl.points.size(); ++i) {
         writePair(10, pl.points[i].x);
         writePair(20, pl.points[i].y);
-        if (!pl.bulges.empty())
+        if (i < pl.bulges.size() && pl.bulges[i] != 0.0)
             writePair(42, pl.bulges[i]);
     }
 }

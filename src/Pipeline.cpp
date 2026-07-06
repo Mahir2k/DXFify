@@ -57,7 +57,7 @@ PipelineReport runPipeline(const std::string& inputImage,
     double inset = cfg.calib.markerInsetMm * pxPerMm;
     double sheetW_px = cfg.calib.sheetWidthMm * pxPerMm;
     double sheetH_px = cfg.calib.sheetHeightMm * pxPerMm;
-    double pad = 5.0; // Slight padding to catch edges
+    double pad = 15.0; // Moderate padding to catch edges
 
     ignoreRegions.push_back(cv::Rect(inset - pad, inset - pad, mSize + 2*pad, mSize + 2*pad));
     ignoreRegions.push_back(cv::Rect(sheetW_px - inset - mSize - pad, inset - pad, mSize + 2*pad, mSize + 2*pad));

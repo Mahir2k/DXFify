@@ -73,6 +73,7 @@ CliArgs parseCli(int argc, char** argv) {
             else throw CliError("Unknown --seg-method: " + m);
         }
         else if (s == "--min-object-mm2")  a.cfg.seg.minObjectAreaMm   = std::stod(need(i,s));
+        else if (s == "--morph-close-mm")  a.cfg.seg.morphCloseKernelMm = std::stod(need(i,s));
         else if (s == "--simplify-mm")     a.cfg.vec.simplifyEpsilonMm = std::stod(need(i,s));
         else if (s == "--fit-arcs")        a.cfg.vec.fitArcs = true;
         else if (s == "--arc-tol-mm")      a.cfg.vec.arcFitToleranceMm = std::stod(need(i,s));
