@@ -26,6 +26,7 @@ struct ContourSet {
   cv::Mat rawMask;
   cv::Mat cleanedMask;
   cv::Mat filledMask;
+  cv::Mat holeMask;
 };
 
 ContourSet segmentObject(const cv::Mat &calibratedImage, double pixelsPerMm,

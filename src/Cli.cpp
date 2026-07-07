@@ -37,7 +37,7 @@ Vectorization options:
   --snap-right-angles        Snap near-90° corners to exact 90°
 
 Output / debug:
-  --debug <path>             Write overlay plus raw/cleaned/filled masks
+  --debug <path>             Write overlay plus raw/cleaned/filled/hole masks
   --report <path>            Write JSON validation report
   --help                     Show this help
 

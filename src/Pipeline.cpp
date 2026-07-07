@@ -125,6 +125,8 @@ PipelineReport runPipeline(const std::string& inputImage,
             cv::imwrite(pathWithSuffix(cfg.debugOutputPath, ".cleaned-mask"), cs.cleanedMask);
         if (!cs.filledMask.empty())
             cv::imwrite(pathWithSuffix(cfg.debugOutputPath, ".filled-mask"), cs.filledMask);
+        if (!cs.holeMask.empty())
+            cv::imwrite(pathWithSuffix(cfg.debugOutputPath, ".hole-mask"), cs.holeMask);
     }
 
     // 7. JSON report

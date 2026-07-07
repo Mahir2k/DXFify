@@ -59,6 +59,53 @@ cv::Mat makeAdaptiveMask(const cv::Mat& gray, double pxPerMm) {
     return mask;
 }
 
+cv::Mat makeBackgroundHoleMask(const cv::Mat& bgr,
+                               const cv::Mat& gray,
+                               const cv::Mat& outerMask,
+                               double pxPerMm) {
+    cv::Mat outsideMask;
+    cv::bitwise_not(outerMask, outsideMask);
+
+    cv::Scalar bgMeanScalar;
+    cv::Scalar bgStdScalar;
+    cv::meanStdDev(gray, bgMeanScalar, bgStdScalar, outsideMask);
+    const double bgMean = bgMeanScalar[0];
+    const double bgStd = bgStdScalar[0];
+
+    cv::Mat hsv;
+    cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
+    std::vector<cv::Mat> channels;
+    cv::split(hsv, channels);
+    const cv::Mat& saturation = channels[1];
+
+    cv::Mat brightMask;
+    cv::threshold(gray, brightMask, std::max(80.0, bgMean - std::max(45.0, bgStd)),
+                  255, cv::THRESH_BINARY);
+
+    cv::Mat lowSaturationMask;
+    cv::threshold(saturation, lowSaturationMask, 80, 255, cv::THRESH_BINARY_INV);
+
+    int insetPx = std::max(3, static_cast<int>(std::round(3.0 * pxPerMm)));
+    if (insetPx % 2 == 0) insetPx++;
+    cv::Mat insetElem = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                                  cv::Size(insetPx, insetPx));
+    cv::Mat innerObjectMask;
+    cv::erode(outerMask, innerObjectMask, insetElem);
+
+    cv::Mat holeMask;
+    cv::bitwise_and(brightMask, lowSaturationMask, holeMask);
+    cv::bitwise_and(holeMask, innerObjectMask, holeMask);
+
+    int cleanPx = std::max(3, static_cast<int>(std::round(0.5 * pxPerMm)));
+    if (cleanPx % 2 == 0) cleanPx++;
+    cv::Mat cleanElem = cv::getStructuringElement(cv::MORPH_ELLIPSE,
+                                                  cv::Size(cleanPx, cleanPx));
+    cv::morphologyEx(holeMask, holeMask, cv::MORPH_OPEN, cleanElem);
+    cv::morphologyEx(holeMask, holeMask, cv::MORPH_CLOSE, cleanElem);
+
+    return holeMask;
+}
+
 } // namespace
 
 ContourSet segmentObject(const cv::Mat& img, double pxPerMm,
@@ -116,7 +163,7 @@ ContourSet segmentObject(const cv::Mat& img, double pxPerMm,
     cv::morphologyEx(mask, mask, cv::MORPH_CLOSE, elem, cv::Point(-1,-1), 2);
     cv::Mat cleanedMask = mask.clone();
     
-    // 4. Extract contours and fill solid regions to remove gradient noise inside objects
+    // 4. Extract contours and fill solid outer regions to remove edge noise
     std::vector<std::vector<cv::Point>> contours;
     std::vector<cv::Vec4i> hierarchy;
     cv::findContours(mask, contours, hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_SIMPLE);
@@ -125,16 +172,42 @@ ContourSet segmentObject(const cv::Mat& img, double pxPerMm,
     double minAreaPx = cfg.minObjectAreaMm * pxPerMm * pxPerMm;
     
     for (size_t i = 0; i < contours.size(); i++) {
-        if (hierarchy[i][3] == -1) { // Outer contour
+        if (hierarchy[i][3] == -1) {
             if (cv::contourArea(contours[i]) >= minAreaPx) {
                 cv::drawContours(filledMask, contours, i, 255, cv::FILLED);
             }
-        } else { // Hole
-            int parent = hierarchy[i][3];
-            if (cv::contourArea(contours[parent]) >= minAreaPx) {
-                cv::drawContours(filledMask, contours, i, 0, cv::FILLED); // Punch hole
+        }
+    }
+
+    cv::Mat holeMask;
+    if (cfg.returnHoles) {
+        holeMask = makeBackgroundHoleMask(tempImg, gray, filledMask, pxPerMm);
+
+        std::vector<std::vector<cv::Point>> holeContours;
+        cv::findContours(holeMask, holeContours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+        const double minHoleAreaPx = std::max(2.0 * pxPerMm * pxPerMm, minAreaPx * 0.01);
+        const double minHoleSpanPx = std::max(3.0, 1.5 * pxPerMm);
+        const double maxHoleAreaPx = std::max(minHoleAreaPx, cv::countNonZero(filledMask) * 0.35);
+        cv::Mat verifiedHoleMask = cv::Mat::zeros(mask.size(), CV_8U);
+        for (const auto& hole : holeContours) {
+            const double area = cv::contourArea(hole);
+            const cv::Rect bounds = cv::boundingRect(hole);
+            const double bboxArea = static_cast<double>(bounds.width) * bounds.height;
+            const double fillRatio = bboxArea > 0.0 ? area / bboxArea : 0.0;
+            const int minSpan = std::min(bounds.width, bounds.height);
+            const double aspectRatio = minSpan > 0
+                                           ? static_cast<double>(std::max(bounds.width, bounds.height)) / minSpan
+                                           : 1e9;
+            if (area >= minHoleAreaPx && area <= maxHoleAreaPx &&
+                minSpan >= minHoleSpanPx && fillRatio >= 0.25 && aspectRatio <= 4.0) {
+                cv::drawContours(verifiedHoleMask, std::vector<std::vector<cv::Point>>{hole},
+                                 -1, 255, cv::FILLED);
             }
         }
+
+        holeMask = verifiedHoleMask;
+        filledMask.setTo(0, holeMask);
     }
     
     // 5. Re-extract clean contours from the solid/filled mask
@@ -146,6 +219,7 @@ ContourSet segmentObject(const cv::Mat& img, double pxPerMm,
     out.rawMask = rawMask;
     out.cleanedMask = cleanedMask;
     out.filledMask = filledMask.clone();
+    out.holeMask = holeMask.clone();
     for (size_t i = 0; i < finalContours.size(); i++) {
         if (finalHierarchy[i][3] == -1) {
             if (cv::contourArea(finalContours[i]) >= minAreaPx) {

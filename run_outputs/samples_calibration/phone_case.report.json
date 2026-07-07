@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "markersDetected": 4,
+  "pixelsPerMm": 4.0000,
+  "reprojectionErrorPx": 0.0000,
+  "outerContours": 1,
+  "holeContours": 1,
+  "bboxWidthMm": 76.0000,
+  "bboxHeightMm": 160.2500,
+  "perimeterMm": 451.9698
+}
