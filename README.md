@@ -2,7 +2,7 @@
 
 ## What it does
 `dxfer` converts a single photograph of a flat object lying on a calibrated
-further into a metrically-scaled 2D ASCII DXF file. The output is suitable
+sheet into a metrically-scaled 2D ASCII DXF file. The output is suitable
 for direct import into laser-cutter / CAD software at true 1:1 scale.
 
 ## Pipeline overview
@@ -10,7 +10,7 @@ for direct import into laser-cutter / CAD software at true 1:1 scale.
 ```
    ┌────────┐   ┌───────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────┐
    │ photo  │ → │ Calibration   │ → │ Segmentation │ → │ Vectorize    │ → │ DXF      │
-   │        │   │ (ArUco+H)     │   │ (Otsu+holes) │   │ (DP+arcs)    │   │ (mm, Y-up)│
+   │        │   │ (ArUco+H)     │   │ (multi+holes)│   │ (DP+arcs)    │   │ (mm, Y-up)│
    └────────┘   └───────────────┘   └──────────────┘   └──────────────┘   └──────────┘
 ```
 
@@ -29,9 +29,9 @@ for direct import into laser-cutter / CAD software at true 1:1 scale.
   tolerances of ±0.2 mm).
 
 ### 2. Segmentation
-- Background = white calibration sheet → object is isolated via Otsu on the
-  inverted grayscale (or HSV saturation, useful for white objects on white
-  sheets).
+- Background = calibration sheet → object is isolated with selectable
+  segmentation methods: gradient (default), Otsu on inverted grayscale, HSV
+  saturation, or adaptive thresholding.
 - Morphological close (default 1 mm kernel) bridges small mask gaps from
   shadows / JPEG artifacts.
 - `cv::findContours` with `RETR_CCOMP` returns a 2-level hierarchy:
@@ -90,7 +90,7 @@ compare the reported `bboxWidthMm`/`bboxHeightMm` to ground truth.
 | Marker detection (pixel)        | ±0.5 px → ±0.13 mm @ 4 px/mm |
 | Homography reprojection         | < 0.5 mm             |
 | Lens distortion (uncorrected)   | up to 1–3 mm near borders |
-| Segmentation edge bias (Otsu)   | ±0.5 px → ±0.13 mm   |
+| Segmentation edge bias          | ±0.5 px → ±0.13 mm   |
 | JPEG compression (q=85)         | ±0.1 mm              |
 | **Total (with intrinsics)**     | **~0.3 mm RMS**      |
 | **Total (no intrinsics, centered)** | **~0.5–1 mm RMS** |
@@ -109,9 +109,9 @@ compare the reported `bboxWidthMm`/`bboxHeightMm` to ground truth.
 - **Single dominant object**: although multi-object detection works at the
   segmentation level, the validation report currently reports stats for the
   largest contour only.
-- **Color similarity**: a white object on a white calibration sheet will
-  fail Otsu; use `--seg-method sat` or print the sheet on colored card
-  stock.
+- **Color similarity**: a low-contrast object on a similar calibration sheet
+  may fail one segmentation method; compare `--seg-method gradient`, `otsu`,
+  `sat`, and `adaptive` with `--debug`.
 - **Arc fit false positives**: tiny irregular wiggles can sometimes fit a
   large-radius arc. If you see implausibly large arcs in CAD, raise
   `--arc-tol-mm` to 0.2 mm or disable `--fit-arcs`.

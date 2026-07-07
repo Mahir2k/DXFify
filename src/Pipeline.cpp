@@ -33,6 +33,15 @@ void writeReport(const std::string& path, const PipelineReport& r) {
     f << "}\n";
 }
 
+std::string pathWithSuffix(const std::string& path, const std::string& suffix) {
+    const auto slash = path.find_last_of("/\\");
+    const auto dot = path.find_last_of('.');
+    const bool hasExtension = dot != std::string::npos &&
+                              (slash == std::string::npos || dot > slash);
+    const auto split = hasExtension ? dot : path.size();
+    return path.substr(0, split) + suffix + path.substr(split);
+}
+
 } // namespace
 
 PipelineReport runPipeline(const std::string& inputImage,
@@ -110,6 +119,12 @@ PipelineReport runPipeline(const std::string& inputImage,
         cv::drawContours(dbg, cs.outer, -1, cv::Scalar(0,255,0), 2);
         cv::drawContours(dbg, cs.holes, -1, cv::Scalar(0,0,255), 2);
         cv::imwrite(cfg.debugOutputPath, dbg);
+        if (!cs.rawMask.empty())
+            cv::imwrite(pathWithSuffix(cfg.debugOutputPath, ".raw-mask"), cs.rawMask);
+        if (!cs.cleanedMask.empty())
+            cv::imwrite(pathWithSuffix(cfg.debugOutputPath, ".cleaned-mask"), cs.cleanedMask);
+        if (!cs.filledMask.empty())
+            cv::imwrite(pathWithSuffix(cfg.debugOutputPath, ".filled-mask"), cs.filledMask);
     }
 
     // 7. JSON report
