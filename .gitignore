@@ -1,4 +1,6 @@
 outputs/
 build/
 *.sh
-
+venv/
+__pychache__/
+*.pth
