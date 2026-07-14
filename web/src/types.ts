@@ -51,6 +51,8 @@ export interface ConversionFiles {
   dxf: string;
   debug: string;
   report: string;
+  original?: string;
+  [key: string]: string | undefined;
 }
 
 export interface ConversionResult {

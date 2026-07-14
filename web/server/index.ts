@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -13,8 +13,12 @@ const webRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(webRoot, '..');
 const jobsRoot = path.join(webRoot, 'uploads', 'jobs');
 const incomingRoot = path.join(webRoot, 'uploads', 'incoming');
-const dxferBinary = process.env.DXFER_BIN ?? path.join(repoRoot, 'build', 'dxfer');
+const configuredDxferBinary = process.env.DXFER_BIN ?? './build/dxfer';
+const dxferBinary = path.isAbsolute(configuredDxferBinary)
+  ? configuredDxferBinary
+  : path.resolve(repoRoot, configuredDxferBinary);
 const isMockMode = process.env.DXFER_MOCK === '1';
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 await mkdir(jobsRoot, { recursive: true });
 await mkdir(incomingRoot, { recursive: true });
@@ -59,13 +63,73 @@ function asBoolean(value: unknown) {
   return value === 'true' || value === true;
 }
 
+function safeFilename(filename: string) {
+  return filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'uploaded-image';
+}
+
+function jobFolderFor(jobId: string) {
+  if (!uuidPattern.test(jobId)) return null;
+  const resolvedJobsRoot = path.resolve(jobsRoot);
+  const resolvedJobFolder = path.resolve(resolvedJobsRoot, jobId);
+  if (!resolvedJobFolder.startsWith(resolvedJobsRoot + path.sep)) return null;
+  return resolvedJobFolder;
+}
+
 function jobFile(jobId: string, filename: string) {
-  if (!/^[a-f0-9-]+$/i.test(jobId)) return null;
-  return path.join(jobsRoot, jobId, filename);
+  const jobFolder = jobFolderFor(jobId);
+  if (!jobFolder) return null;
+  if (filename !== path.basename(filename)) return null;
+
+  const resolved = path.resolve(jobFolder, filename);
+  if (!resolved.startsWith(jobFolder + path.sep)) return null;
+  return resolved;
+}
+
+function quoteArg(arg: string) {
+  return /\s|["'\\$`]/.test(arg) ? JSON.stringify(arg) : arg;
+}
+
+async function collectJobFiles(jobId: string) {
+  const jobFolder = jobFolderFor(jobId);
+  if (!jobFolder) return {};
+
+  const names = await readdir(jobFolder);
+  const files: Record<string, string> = {};
+  for (const name of names) {
+    if (name !== path.basename(name)) continue;
+    const key = name
+      .replace(/^result\./, '')
+      .replace(/\./g, '_')
+      .replace(/_png$/, '')
+      .replace(/_json$/, '')
+      .replace(/_dxf$/, '');
+    files[key || name] = `/api/jobs/${jobId}/${encodeURIComponent(name)}`;
+  }
+
+  return files;
+}
+
+class DxferRunError extends Error {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  command: string;
+
+  constructor(message: string, command: string, stdout: string, stderr: string, code: number | null) {
+    super(message);
+    this.name = 'DxferRunError';
+    this.command = command;
+    this.stdout = stdout;
+    this.stderr = stderr;
+    this.code = code;
+  }
 }
 
 function runDxfer(args: string[]) {
   return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    const command = [dxferBinary, ...args].map(quoteArg).join(' ');
+    console.log(`[dxfer] ${command}`);
+
     const child = spawn(dxferBinary, args, {
       cwd: repoRoot,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -79,12 +143,20 @@ function runDxfer(args: string[]) {
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
-    child.on('error', reject);
+    child.on('error', (error) => {
+      reject(new DxferRunError(error.message, command, stdout, stderr, null));
+    });
     child.on('close', (code) => {
       if (code === 0) {
         resolve({ stdout, stderr });
       } else {
-        reject(new Error(stderr || stdout || `dxfer exited with code ${code}`));
+        reject(new DxferRunError(
+          stderr || stdout || `dxfer exited with code ${code}`,
+          command,
+          stdout,
+          stderr,
+          code,
+        ));
       }
     });
   });
@@ -119,20 +191,25 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
   }
 
   const jobId = randomUUID();
-  const jobFolder = path.join(jobsRoot, jobId);
+  const jobFolder = jobFolderFor(jobId);
+  if (!jobFolder) {
+    return res.status(500).json({ success: false, message: 'Could not create job folder.' });
+  }
   await mkdir(jobFolder, { recursive: true });
 
-  const inputPath = path.join(jobFolder, path.basename(req.file.originalname || 'uploaded-image'));
+  const inputName = `uploaded-${safeFilename(req.file.originalname || 'image')}`;
+  const inputPath = path.join(jobFolder, inputName);
   const outputPath = path.join(jobFolder, 'result.dxf');
   const debugPath = path.join(jobFolder, 'result.dbg.png');
   const reportPath = path.join(jobFolder, 'result.json');
-  await writeFile(inputPath, await readFile(req.file.path));
+  await copyFile(req.file.path, inputPath);
 
   try {
     if (!isMockMode && !existsSync(dxferBinary)) {
       return res.status(500).json({
         success: false,
         message: 'dxfer binary not found. Build the C++ project first.',
+        detail: `Tried to run ${dxferBinary}. Set DXFER_BIN to override the converter path.`,
       });
     }
 
@@ -168,11 +245,15 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
       report = JSON.parse(await readFile(reportPath, 'utf8'));
     }
 
+    const files = await collectJobFiles(jobId);
+
     return res.json({
       success: true,
       jobId,
       report,
       files: {
+        ...files,
+        original: `/api/jobs/${jobId}/${encodeURIComponent(inputName)}`,
         dxf: `/api/jobs/${jobId}/result.dxf`,
         debug: `/api/jobs/${jobId}/result.dbg.png`,
         report: `/api/jobs/${jobId}/result.json`,
@@ -180,22 +261,27 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Conversion failed.';
+    const isDxferError = error instanceof DxferRunError;
+    const stdout = isDxferError ? error.stdout : undefined;
+    const stderr = isDxferError ? error.stderr : undefined;
+    const code = isDxferError ? error.code : undefined;
+    const command = isDxferError ? error.command : undefined;
+
     return res.status(500).json({
       success: false,
       message: message.includes('Fewer than 4 markers')
         ? 'Bad calibration, recapture recommended. Fewer than 4 ArUco markers were detected.'
         : 'Conversion failed. Check the image and conversion settings.',
       detail: message,
+      dxfer: isDxferError ? { code, command, stdout, stderr } : undefined,
     });
+  } finally {
+    await unlink(req.file.path).catch(() => undefined);
   }
 });
 
 app.get('/api/jobs/:jobId/:filename', (req, res) => {
   const { jobId, filename } = req.params;
-  if (!['result.dxf', 'result.dbg.png', 'result.json'].includes(filename)) {
-    return res.status(404).json({ success: false, message: 'File not found.' });
-  }
-
   const filePath = jobFile(jobId, filename);
   if (!filePath || !existsSync(filePath)) {
     return res.status(404).json({ success: false, message: 'File not found.' });

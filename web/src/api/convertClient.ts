@@ -22,7 +22,8 @@ export async function runConversion(
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    const message = payload?.message ?? 'Conversion failed.';
+    const detail = payload?.dxfer?.stderr || payload?.dxfer?.stdout || payload?.detail;
+    const message = [payload?.message ?? 'Conversion failed.', detail].filter(Boolean).join('\n\n');
     throw new Error(message);
   }
 
