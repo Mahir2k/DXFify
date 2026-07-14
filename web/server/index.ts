@@ -162,6 +162,46 @@ function runDxfer(args: string[]) {
   });
 }
 
+async function tryRenderDxfPreview(dxfPath: string, previewPath: string) {
+  const renderScript = path.join(repoRoot, 'dxferpy', 'render_dxf.py');
+  if (!existsSync(renderScript)) return;
+
+  const code = [
+    'import sys',
+    'from dxferpy.render_dxf import render_dxf_to_png',
+    'render_dxf_to_png(sys.argv[1], sys.argv[2])',
+  ].join('; ');
+  const args = ['-c', code, dxfPath, previewPath];
+  const command = ['python3', ...args].map(quoteArg).join(' ');
+  console.log(`[dxf-preview] ${command}`);
+
+  await new Promise<void>((resolve) => {
+    const child = spawn('python3', args, {
+      cwd: repoRoot,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', (error) => {
+      console.warn(`[dxf-preview] preview render skipped: ${error.message}`);
+      resolve();
+    });
+    child.on('close', (code) => {
+      if (code !== 0) {
+        console.warn(`[dxf-preview] preview render failed with code ${code}: ${stderr || stdout}`);
+      }
+      resolve();
+    });
+  });
+}
+
 async function writeMockJob(jobFolder: string) {
   const report = {
     success: true,
@@ -176,6 +216,7 @@ async function writeMockJob(jobFolder: string) {
   };
 
   await writeFile(path.join(jobFolder, 'result.dbg.png'), placeholderPng);
+  await writeFile(path.join(jobFolder, 'result.preview.png'), placeholderPng);
   await writeFile(path.join(jobFolder, 'result.json'), JSON.stringify(report, null, 2));
   await writeFile(
     path.join(jobFolder, 'result.dxf'),
@@ -201,6 +242,7 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
   const inputPath = path.join(jobFolder, inputName);
   const outputPath = path.join(jobFolder, 'result.dxf');
   const debugPath = path.join(jobFolder, 'result.dbg.png');
+  const previewPath = path.join(jobFolder, 'result.preview.png');
   const reportPath = path.join(jobFolder, 'result.json');
   await copyFile(req.file.path, inputPath);
 
@@ -242,6 +284,7 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
 
       // TODO: map holeSensitivity when the C++ CLI exposes a hole sensitivity option.
       await runDxfer(args);
+      await tryRenderDxfPreview(outputPath, previewPath);
       report = JSON.parse(await readFile(reportPath, 'utf8'));
     }
 
@@ -254,6 +297,7 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
       files: {
         ...files,
         original: `/api/jobs/${jobId}/${encodeURIComponent(inputName)}`,
+        preview: existsSync(previewPath) ? `/api/jobs/${jobId}/result.preview.png` : undefined,
         dxf: `/api/jobs/${jobId}/result.dxf`,
         debug: `/api/jobs/${jobId}/result.dbg.png`,
         report: `/api/jobs/${jobId}/result.json`,

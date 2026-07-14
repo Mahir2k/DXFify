@@ -1,15 +1,16 @@
-import type { ConversionReport } from '../types';
+import type { ConversionErrorDetails, ConversionResult } from '../types';
 
 interface ReportPanelProps {
-  report: ConversionReport | null;
-  error: string | null;
+  result: ConversionResult | null;
+  error: ConversionErrorDetails | null;
 }
 
 function formatNumber(value: number | undefined, digits = 4) {
   return typeof value === 'number' ? value.toFixed(digits) : '—';
 }
 
-export function ReportPanel({ report, error }: ReportPanelProps) {
+export function ReportPanel({ result, error }: ReportPanelProps) {
+  const report = result?.report ?? null;
   const warnings: string[] = [];
   const markers = report?.markersDetected;
   const reprojectionError = report?.reprojectionErrorPx;
@@ -34,7 +35,16 @@ export function ReportPanel({ report, error }: ReportPanelProps) {
         </div>
       </div>
 
-      {error ? <div className="error-box">{error}</div> : null}
+      {error ? (
+        <details className="error-box" open>
+          <summary>{error.message}</summary>
+          {error.detail ? <pre>{error.detail}</pre> : null}
+          {error.command ? <pre>command: {error.command}</pre> : null}
+          {typeof error.code !== 'undefined' ? <pre>exit code: {error.code ?? 'spawn error'}</pre> : null}
+          {error.stderr ? <pre>stderr: {error.stderr}</pre> : null}
+          {error.stdout ? <pre>stdout: {error.stdout}</pre> : null}
+        </details>
+      ) : null}
 
       {report ? (
         <>
@@ -44,9 +54,9 @@ export function ReportPanel({ report, error }: ReportPanelProps) {
             <div><dt>Reprojection</dt><dd>{formatNumber(report.reprojectionErrorPx)} px</dd></div>
             <div><dt>Outer contours</dt><dd>{report.outerContours ?? '—'}</dd></div>
             <div><dt>Hole contours</dt><dd>{report.holeContours ?? '—'}</dd></div>
-            <div><dt>Width</dt><dd>{formatNumber(report.bboxWidthMm, 2)} mm</dd></div>
-            <div><dt>Height</dt><dd>{formatNumber(report.bboxHeightMm, 2)} mm</dd></div>
+            <div><dt>Bounds</dt><dd>{formatNumber(report.bboxWidthMm, 2)} × {formatNumber(report.bboxHeightMm, 2)} mm</dd></div>
             <div><dt>Perimeter</dt><dd>{formatNumber(report.perimeterMm, 2)} mm</dd></div>
+            <div><dt>Job ID</dt><dd>{result?.jobId ?? '—'}</dd></div>
           </dl>
 
           {warnings.length > 0 ? (

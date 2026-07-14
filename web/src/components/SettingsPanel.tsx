@@ -84,6 +84,7 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
             value={settings.holeSensitivity}
             onChange={(event) => update('holeSensitivity', Number(event.target.value))}
           />
+          <small>Hole sensitivity is UI-only until the C++ CLI exposes this option.</small>
         </label>
 
         <label className="check-row">

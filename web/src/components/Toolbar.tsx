@@ -19,6 +19,8 @@ const tools: Array<{ id: ToolId; label: string; glyph: string }> = [
 ];
 
 export function Toolbar({ selectedTool, onSelectTool }: ToolbarProps) {
+  const selectedLabel = tools.find((tool) => tool.id === selectedTool)?.label ?? selectedTool;
+
   return (
     <aside className="tool-strip" aria-label="DXF edit tools">
       {tools.map((tool) => (
@@ -35,6 +37,7 @@ export function Toolbar({ selectedTool, onSelectTool }: ToolbarProps) {
           {tool.glyph}
         </button>
       ))}
+      <div className="tool-label">{selectedLabel}</div>
     </aside>
   );
 }

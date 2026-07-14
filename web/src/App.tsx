@@ -1,12 +1,9 @@
 import { useMemo, useState } from 'react';
-import { runConversion } from './api/convertClient';
-import { DxfPreview } from './components/DxfPreview';
-import { ImagePreview } from './components/ImagePreview';
-import { ReportPanel } from './components/ReportPanel';
-import { SettingsPanel } from './components/SettingsPanel';
-import { Toolbar } from './components/Toolbar';
+import { ConversionApiError, runConversion } from './api/convertClient';
 import { TopBar } from './components/TopBar';
+import { Workspace } from './components/Workspace';
 import type {
+  ConversionErrorDetails,
   ConversionReport,
   ConversionResult,
   ConversionSettings,
@@ -31,7 +28,7 @@ function getStatus(
   isConverting: boolean,
   result: ConversionResult | null,
   report: ConversionReport | null,
-  error: string | null,
+  error: ConversionErrorDetails | null,
 ): StatusMessage {
   if (isConverting) return 'Converting...';
   if (error) return 'Conversion failed';
@@ -50,7 +47,7 @@ export default function App() {
   const [isConverting, setIsConverting] = useState(false);
   const [conversionResult, setConversionResult] = useState<ConversionResult | null>(null);
   const [report, setReport] = useState<ConversionReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ConversionErrorDetails | null>(null);
 
   const status = useMemo(
     () => getStatus(uploadedFile, isConverting, conversionResult, report, error),
@@ -93,7 +90,9 @@ export default function App() {
       setConversionResult(result);
       setReport(result.report);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Conversion failed.');
+      setError(err instanceof ConversionApiError
+        ? err.details
+        : { message: err instanceof Error ? err.message : 'Conversion failed.' });
       setSelectedPreviewTab('original');
     } finally {
       setIsConverting(false);
@@ -113,24 +112,19 @@ export default function App() {
         onReset={handleReset}
       />
 
-      <section className="workspace-grid">
-        <div className="preview-row">
-          <DxfPreview result={conversionResult} showGrid />
-          <ImagePreview
-            originalImageUrl={originalImageUrl}
-            debugImageUrl={conversionResult?.files.debug ?? null}
-            selectedTab={selectedPreviewTab}
-            onTabChange={setSelectedPreviewTab}
-          />
-        </div>
-
-        <div className="bottom-row">
-          <ReportPanel report={report} error={error} />
-          <SettingsPanel settings={conversionSettings} onChange={setConversionSettings} />
-        </div>
-
-        <Toolbar selectedTool={selectedTool} onSelectTool={setSelectedTool} />
-      </section>
+      <Workspace
+        result={conversionResult}
+        reportError={error}
+        originalImageUrl={originalImageUrl}
+        uploadedFilename={uploadedFile?.name ?? null}
+        selectedPreviewTab={selectedPreviewTab}
+        selectedTool={selectedTool}
+        settings={conversionSettings}
+        onUpload={handleUpload}
+        onPreviewTabChange={setSelectedPreviewTab}
+        onToolChange={setSelectedTool}
+        onSettingsChange={setConversionSettings}
+      />
     </main>
   );
 }

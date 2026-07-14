@@ -52,6 +52,7 @@ export interface ConversionFiles {
   debug: string;
   report: string;
   original?: string;
+  preview?: string;
   [key: string]: string | undefined;
 }
 
@@ -60,4 +61,13 @@ export interface ConversionResult {
   jobId: string;
   report: ConversionReport;
   files: ConversionFiles;
+}
+
+export interface ConversionErrorDetails {
+  message: string;
+  detail?: string;
+  code?: number | null;
+  command?: string;
+  stdout?: string;
+  stderr?: string;
 }
