@@ -24,6 +24,16 @@ export interface ConversionSettings {
   sheetSize: 'a4' | 'a3' | 'a5' | 'letter' | 'legal';
 }
 
+export interface GeometryEntity {
+  type: 'circle' | 'polyline';
+  layer: 'OUTER' | 'HOLES';
+  cx?: number;
+  cy?: number;
+  r?: number;
+  points?: [number, number][];
+  closed?: boolean;
+}
+
 export interface ConversionReport {
   success?: boolean;
   markersDetected?: number;
@@ -33,7 +43,10 @@ export interface ConversionReport {
   holeContours?: number;
   bboxWidthMm?: number;
   bboxHeightMm?: number;
+  bboxMinXMm?: number;
+  bboxMaxYMm?: number;
   perimeterMm?: number;
+  entities?: GeometryEntity[];
 }
 
 export interface ConversionFiles {

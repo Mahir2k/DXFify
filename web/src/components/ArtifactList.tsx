@@ -20,10 +20,9 @@ export function ArtifactList({ result }: ArtifactListProps) {
 
   return (
     <section className="panel artifact-panel">
-      <div className="panel-header compact-header">
+      <div className="panel-header">
         <div>
           <h2>Generated Files</h2>
-          <p>Job artifacts served by the backend</p>
         </div>
       </div>
 

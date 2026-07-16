@@ -27,11 +27,6 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
             <option value="legal">Legal</option>
           </select>
         </label>
-
-        <small className="settings-hint">
-          The Python pipeline uses AI-based segmentation (BiRefNet) with automatic vectorization.
-          Sheet size is used for ArUco marker calibration and scale correction.
-        </small>
       </div>
     </details>
   );

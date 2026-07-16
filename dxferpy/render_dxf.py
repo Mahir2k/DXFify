@@ -10,14 +10,7 @@ def render_dxf_to_png(dxf_path, png_path):
     doc = ezdxf.readfile(dxf_path)
     msp = doc.modelspace()
     
-    config = Configuration(
-        background_policy=BackgroundPolicy.CUSTOM,
-        custom_bg_color="#000000",
-        color_policy=ColorPolicy.CUSTOM,
-        custom_fg_color="#FFFFFF"
-    )
-    
-    qsave(msp, png_path, config=config, dpi=300)
+    qsave(msp, png_path, bg="#00000000", fg="#FFFFFF", dpi=300)
 
 if __name__ == "__main__":
     dxfs = glob.glob("output/*.dxf")

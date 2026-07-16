@@ -80,7 +80,6 @@ export function ImagePreview({
       <div className="panel-header">
         <div>
           <h2>{title}</h2>
-          <p>Capture and conversion visual checks</p>
         </div>
         <div className="tab-row">
           {tabs.map((tab) => (

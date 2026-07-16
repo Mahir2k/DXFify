@@ -58,8 +58,6 @@ export function Workspace({
         <SettingsPanel settings={settings} onChange={onSettingsChange} />
         <ArtifactList result={result} />
       </div>
-
-      <Toolbar selectedTool={selectedTool} onSelectTool={onToolChange} />
     </section>
   );
 }

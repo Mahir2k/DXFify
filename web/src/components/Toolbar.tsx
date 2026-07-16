@@ -6,7 +6,7 @@ interface ToolbarProps {
 }
 
 const tools: Array<{ id: ToolId; label: string; glyph: string }> = [
-  { id: 'select', label: 'Select / Move', glyph: '↖' },
+  { id: 'select', label: 'Pan / Inspect', glyph: '↖' },
   { id: 'line', label: 'Line', glyph: '╱' },
   { id: 'arc', label: 'Arc / Curve', glyph: '⌒' },
   { id: 'polyline', label: 'Polyline', glyph: '⌁' },

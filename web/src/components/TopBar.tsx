@@ -26,11 +26,7 @@ export function TopBar({
   return (
     <header className="top-bar">
       <div className="brand-block">
-        <span className="brand-mark">DXF</span>
-        <div>
-          <h1>DXFify</h1>
-          <p>Photo to millimeter DXF</p>
-        </div>
+        <span className="brand-mark">DXFify</span>
       </div>
 
       <div className={`status-pill status-${statusClass}`}>

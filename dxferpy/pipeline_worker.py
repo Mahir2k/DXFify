@@ -56,7 +56,7 @@ print(f"[worker] Model loaded in {time.time() - _t0:.1f}s", flush=True)
 def segment_single_image(img_path: str, session) -> tuple:
     """
     Run rembg segmentation on a single image.
-    Returns (warped_bgr, mask, used_aruco: bool).
+    Returns (img, mask, used_aruco: bool).
     """
     img = cv2.imread(img_path)
     if img is None:
@@ -65,27 +65,12 @@ def segment_single_image(img_path: str, session) -> tuple:
     corners, ids = get_aruco_corners(img)
     used_aruco = corners is not None
 
-    if used_aruco:
-        rect = order_points_by_id(corners, ids)
-        width, height = 1000, 1577
-        if np.linalg.norm(rect[1] - rect[0]) > np.linalg.norm(rect[3] - rect[0]):
-            width, height = 1577, 1000
-
-        dst = np.array(
-            [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
-            dtype="float32",
-        )
-        M = cv2.getPerspectiveTransform(rect, dst)
-        warped = cv2.warpPerspective(img, M, (width, height))
-    else:
-        warped = img
-
-    rgb_warped = cv2.cvtColor(warped, cv2.COLOR_BGR2RGB)
-    rembg_mask = remove(rgb_warped, session=session, only_mask=True)
+    rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    rembg_mask = remove(rgb_img, session=session, only_mask=True)
     mask = (np.array(rembg_mask) > 240).astype(np.uint8) * 255
     mask = cv2.erode(mask, np.ones((3, 3), np.uint8), iterations=1)
 
-    return warped, mask, used_aruco
+    return img, mask, used_aruco
 
 
 def vectorize_single_image(
@@ -115,10 +100,13 @@ def vectorize_single_image(
     bbox_min_x, bbox_min_y = float('inf'), float('inf')
     bbox_max_x, bbox_max_y = float('-inf'), float('-inf')
     total_perimeter = 0.0
+    
+    entities = []
 
     if hierarchy is not None:
         for i, contour in enumerate(contours):
             is_hole = hierarchy[0][i][3] != -1
+            layer = "HOLES" if is_hole else "OUTER"
 
             contour_f = np.array(contour, dtype=np.float32)
             if H is not None:
@@ -140,6 +128,15 @@ def vectorize_single_image(
                     cy_mm = float(height - cy) / scale
                     radius_mm = float(radius) / scale
                     msp.add_circle((cx_mm, cy_mm), radius_mm)
+                    
+                    entities.append({
+                        "type": "circle",
+                        "layer": layer,
+                        "cx": round(cx_mm, 4),
+                        "cy": round(cy_mm, 4),
+                        "r": round(radius_mm, 4)
+                    })
+                    
                     entity_count += 1
                     if is_hole:
                         hole_count += 1
@@ -156,6 +153,14 @@ def vectorize_single_image(
             points = vectorize_contour(contour_f, height, scale)
             if points:
                 msp.add_lwpolyline(points, close=True)
+                
+                entities.append({
+                    "type": "polyline",
+                    "layer": layer,
+                    "points": [[round(px, 4), round(py, 4)] for px, py in points],
+                    "closed": True
+                })
+                
                 entity_count += 1
                 if is_hole:
                     hole_count += 1
@@ -185,9 +190,12 @@ def vectorize_single_image(
         "totalEntities": entity_count,
         "bboxWidthMm": round(bbox_w, 2),
         "bboxHeightMm": round(bbox_h, 2),
+        "bboxMinXMm": round(bbox_min_x, 2),
+        "bboxMaxYMm": round(bbox_max_y, 2),
         "perimeterMm": round(total_perimeter, 2),
         "markersDetected": 4 if H is not None else 0,
         "pixelsPerMm": round(scale, 2),
+        "entities": entities
     }
 
 
@@ -223,13 +231,6 @@ def run_pipeline(
         warped, mask, input_path, result_dxf,
         paper_w=paper_w, paper_h=paper_h,
     )
-
-    # Step 3: DXF preview render
-    print(f"[worker] Rendering DXF preview...", flush=True)
-    try:
-        render_dxf_to_png(result_dxf, result_preview)
-    except Exception as e:
-        print(f"[worker] Preview render failed: {e}", flush=True)
 
     # Write report JSON
     with open(result_json, "w") as f:

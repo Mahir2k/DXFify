@@ -201,6 +201,8 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
         preview: existsSync(previewPath) ? `/api/jobs/${jobId}/result.preview.png` : undefined,
         dxf: `/api/jobs/${jobId}/result.dxf`,
         debug: `/api/jobs/${jobId}/result.dbg.png`,
+        mask: existsSync(path.join(jobFolder, 'result.mask.png')) ? `/api/jobs/${jobId}/result.mask.png` : undefined,
+        holes: existsSync(path.join(jobFolder, 'result.holes.png')) ? `/api/jobs/${jobId}/result.holes.png` : undefined,
         report: `/api/jobs/${jobId}/result.json`,
       },
     });
