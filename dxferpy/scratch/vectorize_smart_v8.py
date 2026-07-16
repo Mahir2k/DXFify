@@ -1,0 +1,368 @@
+import cv2
+import numpy as np
+import ezdxf
+import os
+import glob
+
+def get_homography(orig_path):
+    img = cv2.imread(orig_path)
+    if img is None: return None, 1.0
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+    parameters = cv2.aruco.DetectorParameters()
+    detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
+
+    corners, ids, rejected = detector.detectMarkers(gray)
+
+    if ids is not None and len(ids) == 4:
+        centers = []
+        for c in corners:
+            c_mean = np.mean(c[0], axis=0)
+            centers.append(c_mean)
+        centers = np.array(centers)
+        
+        s = centers.sum(axis=1)
+        diff = centers[:, 1] - centers[:, 0]  # y - x
+        
+        tl = centers[np.argmin(s)]
+        br = centers[np.argmax(s)]
+        tr = centers[np.argmin(diff)]
+        bl = centers[np.argmax(diff)]
+        
+        pts_src = np.array([tl, tr, br, bl], dtype=np.float32)
+        
+        scale = 10.0
+        pts_dst = np.array([
+            [30, 30],
+            [180, 30],
+            [180, 267],
+            [30, 267]
+        ], dtype=np.float32) * scale
+        
+        H = cv2.getPerspectiveTransform(pts_src, pts_dst)
+        return H, scale
+    return None, 1.0
+
+def intersect_lines(x0_1, y0_1, vx_1, vy_1, x0_2, y0_2, vx_2, vy_2):
+    det = vx_1 * vy_2 - vy_1 * vx_2
+    if abs(det) < 1e-6:
+        return (x0_1, y0_1)
+    t = ((x0_2 - x0_1) * vy_2 - (y0_2 - y0_1) * vx_2) / det
+    return (x0_1 + t * vx_1, y0_1 + t * vy_1)
+
+def project_point(pt, x0, y0, vx, vy):
+    dx = pt[0] - x0
+    dy = pt[1] - y0
+    t = dx * vx + dy * vy
+    return (x0 + t * vx, y0 + t * vy)
+
+def vectorize_contour(contour, height, scale):
+    n = len(contour)
+    perimeter = cv2.arcLength(contour, True)
+    epsilon = min(2.5, max(0.5, 0.0008 * perimeter))
+    approx = cv2.approxPolyDP(contour, epsilon, True)
+    
+    num_v = len(approx)
+    if num_v < 3:
+        return None
+        
+    pts = [p[0] for p in approx]
+    approx_idx = []
+    
+    ptr = 0
+    for p in pts:
+        best_i = ptr
+        best_dist = 1e9
+        for i in range(n):
+            idx = (ptr + i) % n
+            d = (contour[idx][0][0] - p[0])**2 + (contour[idx][0][1] - p[1])**2
+            if d < best_dist:
+                best_dist = d
+                best_i = idx
+            if d == 0:
+                break
+        approx_idx.append(best_i)
+        ptr = best_i
+
+    seg_fitted_dirs = []
+    for j in range(num_v):
+        j_next = (j + 1) % num_v
+        idx_start = approx_idx[j]
+        idx_end = approx_idx[j_next]
+        
+        raw_pts = []
+        s, e = idx_start, idx_end
+        if s > e:
+            e += n
+        for k in range(s, e + 1):
+            raw_pts.append(contour[k % n][0])
+            
+        pts_f = np.array(raw_pts, dtype=np.float32).reshape(-1, 2)
+        if len(pts_f) >= 2:
+            line = cv2.fitLine(pts_f, cv2.DIST_L2, 0, 0.01, 0.01)
+            vx, vy = float(line[0][0]), float(line[1][0])
+        else:
+            dx = pts[j_next][0] - pts[j][0]
+            dy = pts[j_next][1] - pts[j][1]
+            l = np.hypot(dx, dy)
+            vx, vy = (dx/l, dy/l) if l > 0 else (1.0, 0.0)
+
+        dx = pts[j_next][0] - pts[j][0]
+        dy = pts[j_next][1] - pts[j][1]
+        if vx * dx + vy * dy < 0:
+            vx, vy = -vx, -vy
+
+        seg_fitted_dirs.append((vx, vy))
+
+    seg_angles = []
+    seg_lengths = []
+    for j in range(num_v):
+        vx, vy = seg_fitted_dirs[j]
+        angle = np.degrees(np.arctan2(vy, vx)) % 180.0
+        seg_angles.append(angle)
+        j_next = (j + 1) % num_v
+        seg_lengths.append(
+            np.hypot(pts[j_next][0] - pts[j][0], pts[j_next][1] - pts[j][1])
+        )
+
+    num_bins = 180
+    hist = np.zeros(num_bins)
+    for j in range(num_v):
+        bin_idx = int(round(seg_angles[j])) % num_bins
+        hist[bin_idx] += seg_lengths[j]
+
+    kernel = np.array([0.05, 0.25, 0.4, 0.25, 0.05])
+    hist_smooth = np.convolve(np.tile(hist, 3), kernel, mode='same')[num_bins:2*num_bins]
+    
+    dom_dirs = []
+    hist_copy = hist_smooth.copy()
+    for _ in range(4):
+        peak = np.argmax(hist_copy)
+        if hist_copy[peak] < 0.05 * np.sum(seg_lengths):
+            break
+            
+        if len(dom_dirs) > 0:
+            diff_to_ortho = abs((peak - dom_dirs[0]) % 180 - 90)
+            if diff_to_ortho < 5.0:
+                peak = (dom_dirs[0] + 90) % 180
+                
+        dom_dirs.append(float(peak))
+        
+        clear_peak = int(round(peak))
+        for k in range(-15, 16):
+            hist_copy[(clear_peak + k) % num_bins] = 0
+
+    if not dom_dirs:
+        points = [(float(p[0])/scale, float(height - p[1])/scale) for p in [c[0] for c in contour]]
+        return points if len(points) >= 3 else None
+
+    snapped_dir_idx = []
+    for j in range(num_v):
+        seg_ang = seg_angles[j]
+        best_i = -1
+        best_diff = 180
+        for di, d in enumerate(dom_dirs):
+            diff = abs(seg_ang - d)
+            diff = min(abs(seg_ang - d), 180 - abs(seg_ang - d))
+            if diff < best_diff:
+                best_diff = diff
+                best_i = di
+
+        if best_diff < 10.0:
+            snapped_dir_idx.append(best_i)
+        else:
+            snapped_dir_idx.append(-1)
+
+    merged_pts = []
+    merged_approx_idx = []
+    merged_snapped = []
+    
+    j = 0
+    while j < num_v:
+        seg_dir = snapped_dir_idx[j]
+        run_end = j
+        if seg_dir != -1:
+            while run_end < num_v - 1:
+                next_idx = (run_end + 1) % num_v
+                if snapped_dir_idx[next_idx] != seg_dir:
+                    break
+                run_end += 1
+                if run_end - j > num_v:
+                    break
+        
+        merged_pts.append(pts[j])
+        merged_approx_idx.append(approx_idx[j])
+        merged_snapped.append(seg_dir)
+        
+        j = run_end + 1
+
+    num_m = len(merged_pts)
+    if num_m < 3:
+        points = [(float(p[0])/scale, float(height - p[1])/scale) for p in [c[0] for c in contour]]
+        return points if len(points) >= 3 else None
+
+    seg_lines = []
+    for j in range(num_m):
+        if merged_snapped[j] == -1:
+            seg_lines.append(None)
+            continue
+            
+        j_next = (j + 1) % num_m
+        idx_start = merged_approx_idx[j]
+        idx_end = merged_approx_idx[j_next]
+        
+        raw_pts = []
+        s, e = idx_start, idx_end
+        if s > e:
+            e += n
+        for k in range(s, e + 1):
+            raw_pts.append(contour[k % n][0])
+        
+        if len(raw_pts) >= 3:
+            pts_f = np.array(raw_pts, dtype=np.float32).reshape(-1, 2)
+            line = cv2.fitLine(pts_f, cv2.DIST_L2, 0, 0.01, 0.01)
+            vx, vy, x0, y0 = float(line[0][0]), float(line[1][0]), float(line[2][0]), float(line[3][0])
+        else:
+            x0, y0 = merged_pts[j]
+            dx = merged_pts[j_next][0] - x0
+            dy = merged_pts[j_next][1] - y0
+            l = np.hypot(dx, dy)
+            vx, vy = (dx/l, dy/l) if l > 0 else (1.0, 0.0)
+        
+        dom_ang = np.radians(dom_dirs[merged_snapped[j]])
+        vx_dom, vy_dom = np.cos(dom_ang), np.sin(dom_ang)
+        dx = merged_pts[j_next][0] - merged_pts[j][0]
+        dy = merged_pts[j_next][1] - merged_pts[j][1]
+        if vx_dom * dx + vy_dom * dy < 0:
+            vx_dom, vy_dom = -vx_dom, -vy_dom
+        vx, vy = vx_dom, vy_dom
+        
+        seg_lines.append((vx, vy, x0, y0))
+
+    final_vertices = []
+    for j in range(num_m):
+        j_prev = (j - 1 + num_m) % num_m
+        snap1 = merged_snapped[j_prev]
+        snap2 = merged_snapped[j]
+        
+        if snap1 != -1:
+            vx_1, vy_1, x0_1, y0_1 = seg_lines[j_prev]
+        if snap2 != -1:
+            vx_2, vy_2, x0_2, y0_2 = seg_lines[j]
+            
+        if snap1 != -1 and snap2 != -1:
+            pt = intersect_lines(x0_1, y0_1, vx_1, vy_1, x0_2, y0_2, vx_2, vy_2)
+        elif snap1 != -1 and snap2 == -1:
+            pt = project_point(merged_pts[j], x0_1, y0_1, vx_1, vy_1)
+        elif snap1 == -1 and snap2 != -1:
+            pt = project_point(merged_pts[j], x0_2, y0_2, vx_2, vy_2)
+        else:
+            pt = merged_pts[j]
+            
+        final_vertices.append(pt)
+        
+    refined = []
+    
+    for j in range(num_m):
+        snap2 = merged_snapped[j]
+        start_pt = final_vertices[j]
+        end_pt = final_vertices[(j + 1) % num_m]
+        
+        refined.append((float(start_pt[0]), float(start_pt[1])))
+        
+        if snap2 == -1:
+            idx_start = merged_approx_idx[j]
+            idx_end = merged_approx_idx[(j + 1) % num_m]
+            
+            s, e = idx_start, idx_end
+            if s > e:
+                e += n
+                
+            raw_start = contour[idx_start][0]
+            raw_end = contour[idx_end][0]
+            
+            off_start = np.array(start_pt) - raw_start
+            off_end = np.array(end_pt) - raw_end
+            
+            num_pts = e - s
+            for i in range(1, num_pts):
+                k = s + i
+                pt = contour[k % n][0]
+                t = i / float(num_pts)
+                off = (1 - t) * off_start + t * off_end
+                blended_pt = pt + off
+                refined.append((float(blended_pt[0]), float(blended_pt[1])))
+                
+    points = [(float(p[0])/scale, float(height - p[1])/scale) for p in refined]
+    return points if len(points) >= 3 else None
+
+def process_image(img_path):
+    print(f"Vectorizing {img_path}...")
+    img = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
+    if img is None or img.shape[2] != 4:
+        print(f"  Skipping {img_path}, not an RGBA image.")
+        return
+
+    mask = img[:, :, 3]
+    orig_path = img_path.replace("output/rgba_", "samples/").replace(".png", ".jpg")
+    
+    H, scale = get_homography(orig_path)
+    if H is not None:
+        height = int(297 * scale)
+    else:
+        height = mask.shape[0]
+
+    contours, hierarchy = cv2.findContours(
+        mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE
+    )
+
+    doc = ezdxf.new("R2010")
+    msp = doc.modelspace()
+
+    count = 0
+
+    if hierarchy is not None:
+        for i, contour in enumerate(contours):
+            is_hole = hierarchy[0][i][3] != -1
+            
+            contour_f = np.array(contour, dtype=np.float32)
+            if H is not None:
+                contour_f = cv2.perspectiveTransform(contour_f, H)
+
+            area = cv2.contourArea(contour_f)
+
+            if is_hole and area < 500:
+                continue
+            if not is_hole and area < 100:
+                continue
+                
+            (cx, cy), radius = cv2.minEnclosingCircle(contour_f)
+            if radius > 0:
+                circle_area = np.pi * radius * radius
+                area_ratio = area / circle_area
+                if area_ratio > 0.90:
+                    cx_mm = float(cx) / scale
+                    cy_mm = float(height - cy) / scale
+                    radius_mm = float(radius) / scale
+                    msp.add_circle((cx_mm, cy_mm), radius_mm)
+                    count += 1
+                    continue
+
+            points = vectorize_contour(contour_f, height, scale)
+            if points:
+                msp.add_lwpolyline(points, close=True)
+                count += 1
+
+    print(f"  {count} entities")
+
+    base_name = os.path.basename(img_path)
+    dxf_name = base_name.replace(".png", ".dxf").replace("rgba_", "")
+    out_path = f"output/{dxf_name}"
+    doc.saveas(out_path)
+    print(f"  Saved {out_path}")
+
+if __name__ == "__main__":
+    images = sorted(glob.glob("output/rgba_*.png"))
+    for img_path in images:
+        process_image(img_path)
