@@ -1,4 +1,4 @@
-import type { ConversionSettings, SegmentationMethod, SimplificationStrength } from '../types';
+import type { ConversionSettings } from '../types';
 
 interface SettingsPanelProps {
   settings: ConversionSettings;
@@ -15,41 +15,6 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
       <summary>Conversion Settings</summary>
       <div className="settings-grid">
         <label>
-          <span>Segmentation</span>
-          <select
-            value={settings.segmentationMethod}
-            onChange={(event) => update('segmentationMethod', event.target.value as SegmentationMethod)}
-          >
-            <option value="gradient">gradient</option>
-            <option value="otsu">otsu</option>
-            <option value="sat">sat</option>
-            <option value="adaptive">adaptive</option>
-          </select>
-        </label>
-
-        <label>
-          <span>Pixels / mm</span>
-          <input
-            type="number"
-            min="1"
-            step="0.25"
-            value={settings.pixelsPerMm}
-            onChange={(event) => update('pixelsPerMm', Number(event.target.value))}
-          />
-        </label>
-
-        <label>
-          <span>Marker size mm</span>
-          <input
-            type="number"
-            min="1"
-            step="0.5"
-            value={settings.markerSize}
-            onChange={(event) => update('markerSize', Number(event.target.value))}
-          />
-        </label>
-
-        <label>
           <span>Sheet size</span>
           <select
             value={settings.sheetSize}
@@ -63,47 +28,10 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
           </select>
         </label>
 
-        <label>
-          <span>Simplification</span>
-          <select
-            value={settings.simplificationStrength}
-            onChange={(event) => update('simplificationStrength', event.target.value as SimplificationStrength)}
-          >
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-          </select>
-        </label>
-
-        <label>
-          <span>Hole sensitivity</span>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={settings.holeSensitivity}
-            onChange={(event) => update('holeSensitivity', Number(event.target.value))}
-          />
-          <small>Hole sensitivity is UI-only until the C++ CLI exposes this option.</small>
-        </label>
-
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={settings.fitArcs}
-            onChange={(event) => update('fitArcs', event.target.checked)}
-          />
-          <span>Fit arcs</span>
-        </label>
-
-        <label className="check-row">
-          <input
-            type="checkbox"
-            checked={settings.snapRightAngles}
-            onChange={(event) => update('snapRightAngles', event.target.checked)}
-          />
-          <span>Snap right angles</span>
-        </label>
+        <small className="settings-hint">
+          The Python pipeline uses AI-based segmentation (BiRefNet) with automatic vectorization.
+          Sheet size is used for ArUco marker calibration and scale correction.
+        </small>
       </div>
     </details>
   );

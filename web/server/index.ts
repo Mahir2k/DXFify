@@ -1,6 +1,5 @@
 import express from 'express';
 import multer from 'multer';
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -13,11 +12,8 @@ const webRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(webRoot, '..');
 const jobsRoot = path.join(webRoot, 'uploads', 'jobs');
 const incomingRoot = path.join(webRoot, 'uploads', 'incoming');
-const configuredDxferBinary = process.env.DXFER_BIN ?? './build/dxfer';
-const dxferBinary = path.isAbsolute(configuredDxferBinary)
-  ? configuredDxferBinary
-  : path.resolve(repoRoot, configuredDxferBinary);
 const isMockMode = process.env.DXFER_MOCK === '1';
+const workerUrl = process.env.DXFERPY_URL ?? 'http://127.0.0.1:8788';
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 await mkdir(jobsRoot, { recursive: true });
@@ -39,12 +35,6 @@ const sheetSizes: Record<string, { width: number; height: number }> = {
   legal: { width: 215.9, height: 355.6 },
 };
 
-const simplificationMap: Record<string, number> = {
-  low: 0.08,
-  medium: 0.15,
-  high: 0.3,
-};
-
 const placeholderPng = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAlgAAAGQCAYAAAByNR6YAAAABmJLR0QA/wD/AP+gvaeTAAAGbElEQVR4nO3WwQ3DMAwDQYb//2a3oAslS5KJBRx4k0SWGJ1zFwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4HvX2gMAAADwXSYBAAAwCwAAgFkAAADMAgAA4ABeznC9jvV+Xed4t9Y9AAAAwN8mAQAAcAsAAIBZAAAAzAIAAOCWb0mS5Lquc7zneQAAAMCvTQIAAGAWAAAAswAAAJgFAADAATy9r7UHAACAbzYJAACAWQAAAMwCAABgFgAAALf8fH6/1x4AAAC+2SQAAABmAQAAzAIAAGAWAAAAt3xLkiQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALgGkJfVn4GZy+YAAAAASUVORK5CYII=',
   'base64',
@@ -52,15 +42,6 @@ const placeholderPng = Buffer.from(
 
 function asString(value: unknown, fallback: string) {
   return typeof value === 'string' && value.trim() ? value : fallback;
-}
-
-function asNumber(value: unknown, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function asBoolean(value: unknown) {
-  return value === 'true' || value === true;
 }
 
 function safeFilename(filename: string) {
@@ -85,10 +66,6 @@ function jobFile(jobId: string, filename: string) {
   return resolved;
 }
 
-function quoteArg(arg: string) {
-  return /\s|["'\\$`]/.test(arg) ? JSON.stringify(arg) : arg;
-}
-
 async function collectJobFiles(jobId: string) {
   const jobFolder = jobFolderFor(jobId);
   if (!jobFolder) return {};
@@ -107,99 +84,6 @@ async function collectJobFiles(jobId: string) {
   }
 
   return files;
-}
-
-class DxferRunError extends Error {
-  stdout: string;
-  stderr: string;
-  code: number | null;
-  command: string;
-
-  constructor(message: string, command: string, stdout: string, stderr: string, code: number | null) {
-    super(message);
-    this.name = 'DxferRunError';
-    this.command = command;
-    this.stdout = stdout;
-    this.stderr = stderr;
-    this.code = code;
-  }
-}
-
-function runDxfer(args: string[]) {
-  return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    const command = [dxferBinary, ...args].map(quoteArg).join(' ');
-    console.log(`[dxfer] ${command}`);
-
-    const child = spawn(dxferBinary, args, {
-      cwd: repoRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on('error', (error) => {
-      reject(new DxferRunError(error.message, command, stdout, stderr, null));
-    });
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve({ stdout, stderr });
-      } else {
-        reject(new DxferRunError(
-          stderr || stdout || `dxfer exited with code ${code}`,
-          command,
-          stdout,
-          stderr,
-          code,
-        ));
-      }
-    });
-  });
-}
-
-async function tryRenderDxfPreview(dxfPath: string, previewPath: string) {
-  const renderScript = path.join(repoRoot, 'dxferpy', 'render_dxf.py');
-  if (!existsSync(renderScript)) return;
-
-  const code = [
-    'import sys',
-    'from dxferpy.render_dxf import render_dxf_to_png',
-    'render_dxf_to_png(sys.argv[1], sys.argv[2])',
-  ].join('; ');
-  const args = ['-c', code, dxfPath, previewPath];
-  const command = ['python3', ...args].map(quoteArg).join(' ');
-  console.log(`[dxf-preview] ${command}`);
-
-  await new Promise<void>((resolve) => {
-    const child = spawn('python3', args, {
-      cwd: repoRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on('error', (error) => {
-      console.warn(`[dxf-preview] preview render skipped: ${error.message}`);
-      resolve();
-    });
-    child.on('close', (code) => {
-      if (code !== 0) {
-        console.warn(`[dxf-preview] preview render failed with code ${code}: ${stderr || stdout}`);
-      }
-      resolve();
-    });
-  });
 }
 
 async function writeMockJob(jobFolder: string) {
@@ -226,6 +110,48 @@ async function writeMockJob(jobFolder: string) {
   return report;
 }
 
+// ---------------------------------------------------------------------------
+// Python worker communication
+// ---------------------------------------------------------------------------
+
+async function callPipelineWorker(inputPath: string, outputDir: string, paperSize: string) {
+  const url = `${workerUrl}/process`;
+  console.log(`[dxferpy] POST ${url} inputPath=${inputPath} paperSize=${paperSize}`);
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      inputPath,
+      outputDir,
+      paperSize,
+    }),
+  });
+
+  const body = await resp.json() as { success: boolean; report?: unknown; message?: string; traceback?: string };
+
+  if (!resp.ok || !body.success) {
+    const message = (body.message as string) || `Worker returned ${resp.status}`;
+    throw new Error(message);
+  }
+
+  return body.report;
+}
+
+async function checkWorkerHealth() {
+  try {
+    const resp = await fetch(`${workerUrl}/health`, { signal: AbortSignal.timeout(3000) });
+    const body = await resp.json() as { ok: boolean };
+    return body.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Routes
+// ---------------------------------------------------------------------------
+
 app.post('/api/convert', upload.single('image'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'No image provided.' });
@@ -240,52 +166,27 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
 
   const inputName = `uploaded-${safeFilename(req.file.originalname || 'image')}`;
   const inputPath = path.join(jobFolder, inputName);
-  const outputPath = path.join(jobFolder, 'result.dxf');
-  const debugPath = path.join(jobFolder, 'result.dbg.png');
   const previewPath = path.join(jobFolder, 'result.preview.png');
-  const reportPath = path.join(jobFolder, 'result.json');
   await copyFile(req.file.path, inputPath);
 
   try {
-    if (!isMockMode && !existsSync(dxferBinary)) {
-      return res.status(500).json({
-        success: false,
-        message: 'dxfer binary not found. Build the C++ project first.',
-        detail: `Tried to run ${dxferBinary}. Set DXFER_BIN to override the converter path.`,
-      });
-    }
-
     let report: unknown;
 
     if (isMockMode) {
       report = await writeMockJob(jobFolder);
     } else {
-      const segmentationMethod = asString(req.body.segmentationMethod, 'gradient');
-      const pixelsPerMm = asNumber(req.body.pixelsPerMm, 4);
-      const markerSize = asNumber(req.body.markerSize, 40);
-      const sheetSize = sheetSizes[asString(req.body.sheetSize, 'a4')] ?? sheetSizes.a4;
-      const simplification = simplificationMap[asString(req.body.simplificationStrength, 'medium')] ?? 0.15;
+      const paperSize = asString(req.body.sheetSize, 'a4');
 
-      const args = [
-        '--input', inputPath,
-        '--output', outputPath,
-        '--debug', debugPath,
-        '--report', reportPath,
-        '--seg-method', segmentationMethod,
-        '--pixels-per-mm', String(pixelsPerMm),
-        '--marker-size-mm', String(markerSize),
-        '--sheet-width-mm', String(sheetSize.width),
-        '--sheet-height-mm', String(sheetSize.height),
-        '--simplify-mm', String(simplification),
-      ];
+      // Check worker is alive
+      const healthy = await checkWorkerHealth();
+      if (!healthy) {
+        return res.status(503).json({
+          success: false,
+          message: 'Python pipeline worker is not running. Start it with: cd dxferpy && venv/bin/python3 pipeline_worker.py',
+        });
+      }
 
-      if (asBoolean(req.body.fitArcs)) args.push('--fit-arcs');
-      if (asBoolean(req.body.snapRightAngles)) args.push('--snap-right-angles');
-
-      // TODO: map holeSensitivity when the C++ CLI exposes a hole sensitivity option.
-      await runDxfer(args);
-      await tryRenderDxfPreview(outputPath, previewPath);
-      report = JSON.parse(await readFile(reportPath, 'utf8'));
+      report = await callPipelineWorker(inputPath, jobFolder, paperSize);
     }
 
     const files = await collectJobFiles(jobId);
@@ -305,19 +206,13 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Conversion failed.';
-    const isDxferError = error instanceof DxferRunError;
-    const stdout = isDxferError ? error.stdout : undefined;
-    const stderr = isDxferError ? error.stderr : undefined;
-    const code = isDxferError ? error.code : undefined;
-    const command = isDxferError ? error.command : undefined;
 
     return res.status(500).json({
       success: false,
-      message: message.includes('Fewer than 4 markers')
-        ? 'Bad calibration, recapture recommended. Fewer than 4 ArUco markers were detected.'
+      message: message.includes('markers')
+        ? 'Bad calibration, recapture recommended. ArUco markers were not detected.'
         : 'Conversion failed. Check the image and conversion settings.',
       detail: message,
-      dxfer: isDxferError ? { code, command, stdout, stderr } : undefined,
     });
   } finally {
     await unlink(req.file.path).catch(() => undefined);
@@ -338,16 +233,25 @@ app.get('/api/jobs/:jobId/:filename', (req, res) => {
   }
 });
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
+  const workerOk = await checkWorkerHealth();
   res.json({
     ok: true,
     mock: isMockMode,
-    dxferBinary,
-    dxferFound: existsSync(dxferBinary),
+    workerUrl,
+    workerOk,
   });
 });
 
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, () => {
   console.log(`DXFify API listening on http://localhost:${port}`);
+  // Check worker on startup
+  checkWorkerHealth().then((ok) => {
+    if (ok) {
+      console.log(`[dxferpy] Python worker at ${workerUrl} is ready`);
+    } else {
+      console.warn(`[dxferpy] WARNING: Python worker at ${workerUrl} is not responding. Start it separately.`);
+    }
+  });
 });

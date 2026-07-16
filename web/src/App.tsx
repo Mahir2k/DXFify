@@ -13,14 +13,7 @@ import type {
 } from './types';
 
 const defaultSettings: ConversionSettings = {
-  segmentationMethod: 'gradient',
-  pixelsPerMm: 4,
-  markerSize: 40,
   sheetSize: 'a4',
-  fitArcs: false,
-  snapRightAngles: false,
-  simplificationStrength: 'medium',
-  holeSensitivity: 50,
 };
 
 function getStatus(

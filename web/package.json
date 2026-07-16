@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm:dev:server\" \"npm:dev:client\"",
+    "dev": "concurrently \"npm:dev:worker\" \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:worker": "cd ../dxferpy && venv/bin/python3 pipeline_worker.py",
     "dev:client": "vite --host 0.0.0.0",
     "dev:server": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",

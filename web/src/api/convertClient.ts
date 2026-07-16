@@ -27,14 +27,7 @@ export async function runConversion(
 ): Promise<ConversionResult> {
   const body = new FormData();
   body.append('image', image);
-  body.append('segmentationMethod', settings.segmentationMethod);
-  body.append('pixelsPerMm', String(settings.pixelsPerMm));
-  body.append('markerSize', String(settings.markerSize));
   body.append('sheetSize', settings.sheetSize);
-  body.append('fitArcs', String(settings.fitArcs));
-  body.append('snapRightAngles', String(settings.snapRightAngles));
-  body.append('simplificationStrength', settings.simplificationStrength);
-  body.append('holeSensitivity', String(settings.holeSensitivity));
 
   let response: Response;
   try {

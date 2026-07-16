@@ -20,19 +20,8 @@ export type ToolId =
   | 'undo'
   | 'redo';
 
-export type SegmentationMethod = 'gradient' | 'otsu' | 'sat' | 'adaptive';
-
-export type SimplificationStrength = 'low' | 'medium' | 'high';
-
 export interface ConversionSettings {
-  segmentationMethod: SegmentationMethod;
-  pixelsPerMm: number;
-  markerSize: number;
   sheetSize: 'a4' | 'a3' | 'a5' | 'letter' | 'legal';
-  fitArcs: boolean;
-  snapRightAngles: boolean;
-  simplificationStrength: SimplificationStrength;
-  holeSensitivity: number;
 }
 
 export interface ConversionReport {
