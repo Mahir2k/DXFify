@@ -74,18 +74,14 @@ def segment_single_image(img_path: str, session) -> tuple:
 
 
 def vectorize_single_image(
-    warped_bgr, mask, orig_img_path: str, output_dxf: str,
-    paper_w: float = 210.0, paper_h: float = 297.0,
+    mask, scale: float, output_dxf: str,
+    paper_h: float
 ) -> dict:
     """
     Vectorize a segmented image to DXF.
     Returns a report dict with stats.
     """
-    H, scale = get_homography(orig_img_path, paper_w, paper_h)
-    if H is not None:
-        height = int(paper_h * scale)
-    else:
-        height = mask.shape[0]
+    height = mask.shape[0]
 
     contours, hierarchy = cv2.findContours(
         mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE
@@ -109,8 +105,6 @@ def vectorize_single_image(
             layer = "HOLES" if is_hole else "OUTER"
 
             contour_f = np.array(contour, dtype=np.float32)
-            if H is not None:
-                contour_f = cv2.perspectiveTransform(contour_f, H)
 
             area = cv2.contourArea(contour_f)
 
@@ -193,7 +187,7 @@ def vectorize_single_image(
         "bboxMinXMm": round(bbox_min_x, 2),
         "bboxMaxYMm": round(bbox_max_y, 2),
         "perimeterMm": round(total_perimeter, 2),
-        "markersDetected": 4 if H is not None else 0,
+        "markersDetected": 4 if scale != 1.0 else 0,
         "pixelsPerMm": round(scale, 2),
         "entities": entities
     }
@@ -213,23 +207,62 @@ def run_pipeline(
     # Paths
     result_dxf = os.path.join(output_dir, "result.dxf")
     result_dbg = os.path.join(output_dir, "result.dbg.png")
-    result_preview = os.path.join(output_dir, "result.preview.png")
+    result_original = os.path.join(output_dir, "result.original.png")
+    result_mask = os.path.join(output_dir, "result.mask.png")
+    result_holes = os.path.join(output_dir, "result.holes.png")
     result_json = os.path.join(output_dir, "result.json")
 
     # Step 1: Segmentation
     print(f"[worker] Segmenting {input_path}...", flush=True)
-    warped, mask, used_aruco = segment_single_image(input_path, rembg_session)
+    img, mask, used_aruco = segment_single_image(input_path, rembg_session)
+
+    # Step 2: Get perspective mapping
+    H, scale = get_homography(input_path, paper_w, paper_h)
+
+    # Warp images to rectified space if ArUco detected
+    if H is not None:
+        work_w = int(paper_w * scale)
+        work_h = int(paper_h * scale)
+        warped_img = cv2.warpPerspective(img, H, (work_w, work_h))
+        warped_mask = cv2.warpPerspective(mask, H, (work_w, work_h), flags=cv2.INTER_NEAREST)
+        
+        # Clear the 4 ArUco marker regions in the mask to prevent them from showing in the DXF
+        cx, cy = 32.2, 34.2
+        r = int(22.0 * scale) # 22mm half-width for clean ArUco region clear
+        m0_x, m0_y = int(cx * scale), int(cy * scale)
+        m1_x, m1_y = int((paper_w - cx) * scale), int(cy * scale)
+        m2_x, m2_y = int((paper_w - cx) * scale), int((paper_h - cy) * scale)
+        m3_x, m3_y = int(cx * scale), int((paper_h - cy) * scale)
+        for mx, my in [(m0_x, m0_y), (m1_x, m1_y), (m2_x, m2_y), (m3_x, m3_y)]:
+            cv2.rectangle(warped_mask, (mx - r, my - r), (mx + r, my + r), 0, -1)
+    else:
+        warped_img = img
+        warped_mask = mask
 
     # Save debug image (RGBA overlay)
-    rgba = cv2.cvtColor(warped, cv2.COLOR_BGR2BGRA)
-    rgba[:, :, 3] = mask
+    rgba = cv2.cvtColor(warped_img, cv2.COLOR_BGR2BGRA)
+    rgba[:, :, 3] = warped_mask
     cv2.imwrite(result_dbg, rgba)
 
-    # Step 2: Vectorization
+    # Save warped original image
+    cv2.imwrite(result_original, warped_img)
+
+    # Save warped mask preview
+    cv2.imwrite(result_mask, warped_mask)
+
+    # Save warped holes mask preview if any detected
+    holes_mask = np.zeros_like(warped_mask)
+    contours, hierarchy = cv2.findContours(warped_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+    if hierarchy is not None:
+        for i, contour in enumerate(contours):
+            if hierarchy[0][i][3] != -1:  # is hole
+                cv2.drawContours(holes_mask, [contour], -1, 255, -1)
+    cv2.imwrite(result_holes, holes_mask)
+
+    # Step 3: Vectorization (using the already warped mask)
     print(f"[worker] Vectorizing...", flush=True)
     report = vectorize_single_image(
-        warped, mask, input_path, result_dxf,
-        paper_w=paper_w, paper_h=paper_h,
+        warped_mask, scale, result_dxf, paper_h=paper_h
     )
 
     # Write report JSON

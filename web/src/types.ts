@@ -18,7 +18,10 @@ export type ToolId =
   | 'snap'
   | 'mark-hole'
   | 'undo'
-  | 'redo';
+  | 'redo'
+  | 'measure'
+  | 'brush'
+  | 'delete-point';
 
 export interface ConversionSettings {
   sheetSize: 'a4' | 'a3' | 'a5' | 'letter' | 'legal';
@@ -73,3 +76,11 @@ export interface ConversionErrorDetails {
   stdout?: string;
   stderr?: string;
 }
+
+export interface Viewport {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+

@@ -59,11 +59,12 @@ def get_homography(orig_path, paper_w=210.0, paper_h=297.0):
             ], dtype=np.float32)
             
             scale = 10.0
+            cx, cy = 32.2, 34.2
             pts_dst = np.array([
-                [0, 0],
-                [paper_w * scale, 0],
-                [paper_w * scale, paper_h * scale],
-                [0, paper_h * scale]
+                [cx * scale, cy * scale],
+                [(paper_w - cx) * scale, cy * scale],
+                [(paper_w - cx) * scale, (paper_h - cy) * scale],
+                [cx * scale, (paper_h - cy) * scale]
             ], dtype=np.float32)
             
             H = cv2.getPerspectiveTransform(pts_src, pts_dst)
@@ -205,15 +206,17 @@ def vectorize_contour(contour, height, scale):
     while changed:
         changed = False
         for j in range(num_v):
-            if snapped_dir_idx[j] == -1 or seg_lengths[j] < 15.0:
+            # Only bridge if the segment is actually short (less than 10px / 1mm) and currently unsnapped
+            if snapped_dir_idx[j] == -1 and seg_lengths[j] < 10.0:
                 prev_dir = -1
-                for step in range(1, num_v // 2):
+                # Only check up to 2 steps away
+                for step in range(1, 3):
                     p = (j - step) % num_v
                     if snapped_dir_idx[p] != -1 and seg_lengths[p] >= 5.0:
                         prev_dir = snapped_dir_idx[p]
                         break
                 next_dir = -1
-                for step in range(1, num_v // 2):
+                for step in range(1, 3):
                     nxt = (j + step) % num_v
                     if snapped_dir_idx[nxt] != -1 and seg_lengths[nxt] >= 5.0:
                         next_dir = snapped_dir_idx[nxt]

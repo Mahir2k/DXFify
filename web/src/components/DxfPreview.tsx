@@ -1,70 +1,631 @@
-import { useState, useRef } from 'react';
-import type { ConversionResult, ToolId } from '../types';
+import { useState, useRef, useEffect } from 'react';
+import type { ConversionResult, ToolId, Viewport, GeometryEntity } from '../types';
+import { Ruler } from './Ruler';
+
+/* ------------------------------------------------------------------ */
+/* Props                                                               */
+/* ------------------------------------------------------------------ */
 
 interface DxfPreviewProps {
   result: ConversionResult | null;
   selectedTool: ToolId;
-  showGrid: boolean;
+  gridEnabled: boolean;
+  onToggleGrid: () => void;
+  viewport: Viewport | null;
+  onViewportChange: (vp: Viewport) => void;
+  onFitToView: () => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  entities: GeometryEntity[];
+  onEntitiesChange: (entities: GeometryEntity[], commit?: boolean) => void;
+  brushShape?: 'circle' | 'square';
+  brushRadius?: number;
+  onBrushRadiusChange?: (radius: number) => void;
 }
 
-export function DxfPreview({ result, selectedTool, showGrid }: DxfPreviewProps) {
-  const [gridEnabled, setGridEnabled] = useState(showGrid);
+/* ------------------------------------------------------------------ */
+/* Component                                                           */
+/* ------------------------------------------------------------------ */
+
+export function DxfPreview({
+  result,
+  selectedTool,
+  gridEnabled,
+  onToggleGrid,
+  viewport,
+  onViewportChange,
+  onFitToView,
+  onZoomIn,
+  onZoomOut,
+  entities,
+  onEntitiesChange,
+  brushShape = 'circle',
+  brushRadius = 15,
+  onBrushRadiusChange,
+}: DxfPreviewProps) {
   const [outerLayerEnabled, setOuterLayerEnabled] = useState(true);
   const [holeLayerEnabled, setHoleLayerEnabled] = useState(true);
-  
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  
+
   const [isDragging, setIsDragging] = useState(false);
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
+  const [cursorMm, setCursorMm] = useState<{ x: number; y: number } | null>(null);
+  
+  /* ---- Measure tool state ---- */
+  const [measureStart, setMeasureStart] = useState<{ x: number; y: number } | null>(null);
+  const [measureEnd, setMeasureEnd] = useState<{ x: number; y: number } | null>(null);
+
+  /* ---- Interactive drawing states ---- */
+  const [drawPoints, setDrawPoints] = useState<[number, number][]>([]);
+  const [arcStart, setArcStart] = useState<{ x: number; y: number } | null>(null);
+  const [arcEnd, setArcEnd] = useState<{ x: number; y: number } | null>(null);
+  const [arcStep, setArcStep] = useState<number>(0); // 0: idle, 1: start set, 2: end set
+  const [snapPoint, setSnapPoint] = useState<{ x: number; y: number } | null>(null);
+
+  /* ---- Dragging node / handles state ---- */
+  const [activeDrag, setActiveDrag] = useState<{
+    type: 'vertex' | 'center' | 'radius';
+    entityIdx: number;
+    pointIdx?: number;
+  } | null>(null);
+
   const svgRef = useRef<SVGSVGElement>(null);
 
+  useEffect(() => {
+    // Reset temporary states when changing tools
+    setMeasureStart(null);
+    setMeasureEnd(null);
+    setDrawPoints([]);
+    setArcStart(null);
+    setArcEnd(null);
+    setArcStep(0);
+    setSnapPoint(null);
+    setActiveDrag(null);
+  }, [selectedTool]);
+
+  // Escape key listener to abort drawing
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDrawPoints([]);
+        setArcStart(null);
+        setArcEnd(null);
+        setArcStep(0);
+        setSnapPoint(null);
+        setActiveDrag(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  /* ---- ViewBox maths ---- */
   const baseMinX = (result?.report?.bboxMinXMm || 0) - 10;
   const baseMinY = result?.report?.bboxMaxYMm ? -(result.report.bboxMaxYMm + 10) : 0;
   const baseWidth = (result?.report?.bboxWidthMm || 100) + 20;
   const baseHeight = (result?.report?.bboxHeightMm || 100) + 20;
 
-  const viewWidth = baseWidth / zoom;
-  const viewHeight = baseHeight / zoom;
-  const viewX = baseMinX - pan.x * (baseWidth / zoom) + (baseWidth - viewWidth) / 2;
-  const viewY = baseMinY - pan.y * (baseHeight / zoom) + (baseHeight - viewHeight) / 2;
+  const activeViewport = viewport || {
+    x: baseMinX,
+    y: baseMinY,
+    w: baseWidth,
+    h: baseHeight,
+  };
 
-  const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (selectedTool !== 'select') return;
-    setIsDragging(true);
-    setLastPos({ x: e.clientX, y: e.clientY });
+  const viewX = activeViewport.x;
+  const viewY = activeViewport.y;
+  const viewWidth = activeViewport.w;
+  const viewHeight = activeViewport.h;
+
+  const getModelCoords = (clientX: number, clientY: number): { x: number; y: number } | null => {
+    if (!svgRef.current) return null;
+    try {
+      const svg = svgRef.current;
+      const pt = svg.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return null;
+      const transformed = pt.matrixTransform(ctm.inverse());
+      return {
+        x: transformed.x,
+        y: -transformed.y,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const distToSegment = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const l2 = dx * dx + dy * dy;
+    if (l2 === 0) return Math.hypot(px - x1, py - y1);
+    let t = ((px - x1) * dx + (py - y1) * dy) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  };
+
+  // Pushes coordinates that fall inside the brush radially outwards to conform to the brush edge (cloth-on-ball effect)
+  const applyBrushDeform = (cx: number, cy: number, currentEntities: GeometryEntity[]) => {
+    return currentEntities.map((entity) => {
+      if (entity.type === 'polyline' && entity.points) {
+        const newPoints = entity.points.map((pt) => {
+          const px = pt[0];
+          const py = pt[1];
+          
+          if (brushShape === 'circle') {
+            const d = Math.hypot(px - cx, py - cy);
+            if (d < brushRadius && d > 0.01) {
+              return [
+                cx + ((px - cx) / d) * brushRadius,
+                cy + ((py - cy) / d) * brushRadius,
+              ] as [number, number];
+            }
+          } else {
+            const dx = px - cx;
+            const dy = py - cy;
+            const maxD = Math.max(Math.abs(dx), Math.abs(dy));
+            if (maxD < brushRadius && maxD > 0.01) {
+              return [
+                cx + (dx / maxD) * brushRadius,
+                cy + (dy / maxD) * brushRadius,
+              ] as [number, number];
+            }
+          }
+          return pt;
+        });
+        return {
+          ...entity,
+          points: newPoints,
+        };
+      } else if (entity.type === 'circle' && entity.cx != null && entity.cy != null) {
+        const px = entity.cx;
+        const py = entity.cy;
+        if (brushShape === 'circle') {
+          const d = Math.hypot(px - cx, py - cy);
+          if (d < brushRadius && d > 0.01) {
+            return {
+              ...entity,
+              cx: cx + ((px - cx) / d) * brushRadius,
+              cy: cy + ((py - cy) / d) * brushRadius,
+            };
+          }
+        } else {
+          const dx = px - cx;
+          const dy = py - cy;
+          const maxD = Math.max(Math.abs(dx), Math.abs(dy));
+          if (maxD < brushRadius && maxD > 0.01) {
+            return {
+              ...entity,
+              cx: cx + (dx / maxD) * brushRadius,
+              cy: cy + (dy / maxD) * brushRadius,
+            };
+          }
+        }
+      }
+      return entity;
+    });
+  };
+
+  // Find nearest vertex or center of existing entities (snapping helper)
+  const getSnappedCoords = (clientX: number, clientY: number): { x: number; y: number } | null => {
+    const coords = getModelCoords(clientX, clientY);
+    if (!coords) return null;
+
+    const snapRadius = 6.0; // mm radius
+    let bestPt = coords;
+    let minD = snapRadius;
+
+    for (const ent of entities) {
+      if (ent.type === 'circle' && ent.cx != null && ent.cy != null) {
+        const d = Math.hypot(coords.x - ent.cx, coords.y - ent.cy);
+        if (d < minD) {
+          minD = d;
+          bestPt = { x: ent.cx, y: ent.cy };
+        }
+      } else if (ent.type === 'polyline' && ent.points) {
+        for (const pt of ent.points) {
+          const d = Math.hypot(coords.x - pt[0], coords.y - pt[1]);
+          if (d < minD) {
+            minD = d;
+            bestPt = { x: pt[0], y: pt[1] };
+          }
+        }
+      }
+    }
+    return minD < snapRadius ? bestPt : null;
+  };
+
+  const findClosestEntity = (pt: { x: number; y: number }) => {
+    let bestIndex = -1;
+    let minD = Infinity;
+
+    for (let idx = 0; idx < entities.length; idx++) {
+      const ent = entities[idx];
+      if (ent.type === 'circle' && ent.cx != null && ent.cy != null && ent.r != null) {
+        const d = Math.abs(Math.hypot(pt.x - ent.cx, pt.y - ent.cy) - ent.r);
+        if (d < minD) {
+          minD = d;
+          bestIndex = idx;
+        }
+      } else if (ent.type === 'polyline' && ent.points && ent.points.length > 0) {
+        for (let i = 0; i < ent.points.length; i++) {
+          const p1 = ent.points[i];
+          const p2 = ent.points[(i + 1) % ent.points.length];
+          if (!ent.closed && i === ent.points.length - 1) continue;
+          
+          const d = distToSegment(pt.x, pt.y, p1[0], p1[1], p2[0], p2[1]);
+          if (d < minD) {
+            minD = d;
+            bestIndex = idx;
+          }
+        }
+      }
+    }
+    return { index: bestIndex, dist: minD };
+  };
+
+  const handleAddPointClick = (pt: { x: number; y: number }) => {
+    let bestEntityIdx = -1;
+    let bestSegmentIdx = -1;
+    let minD = 6.0; // mm radius
+    let splitPoint: [number, number] = [0, 0];
+
+    for (let idx = 0; idx < entities.length; idx++) {
+      const ent = entities[idx];
+      if (ent.type === 'polyline' && ent.points) {
+        for (let i = 0; i < ent.points.length; i++) {
+          const p1 = ent.points[i];
+          const p2 = ent.points[(i + 1) % ent.points.length];
+          if (!ent.closed && i === ent.points.length - 1) continue;
+
+          const dx = p2[0] - p1[0];
+          const dy = p2[1] - p1[1];
+          const l2 = dx * dx + dy * dy;
+          if (l2 === 0) continue;
+          let t = ((pt.x - p1[0]) * dx + (pt.y - p1[1]) * dy) / l2;
+          t = Math.max(0, Math.min(1, t));
+          const projX = p1[0] + t * dx;
+          const projY = p1[1] + t * dy;
+          const d = Math.hypot(pt.x - projX, pt.y - projY);
+
+          if (d < minD) {
+            minD = d;
+            bestEntityIdx = idx;
+            bestSegmentIdx = i;
+            splitPoint = [projX, projY];
+          }
+        }
+      }
+    }
+
+    if (bestEntityIdx !== -1 && bestSegmentIdx !== -1) {
+      const ent = entities[bestEntityIdx];
+      if (ent.points) {
+        const newPoints = [...ent.points];
+        newPoints.splice(bestSegmentIdx + 1, 0, splitPoint);
+        const newEntities = [...entities];
+        newEntities[bestEntityIdx] = {
+          ...ent,
+          points: newPoints,
+        };
+        onEntitiesChange(newEntities);
+      }
+    }
+  };
+
+  const updateCursorFromEvent = (e: React.PointerEvent<SVGSVGElement>) => {
+    const rawCoords = getModelCoords(e.clientX, e.clientY);
+    if (!rawCoords) return;
+
+    let coords = rawCoords;
+    const snapped = getSnappedCoords(e.clientX, e.clientY);
+    if (snapped && selectedTool !== 'brush') {
+      coords = snapped;
+      setSnapPoint(snapped);
+    } else {
+      setSnapPoint(null);
+    }
+
+    setCursorMm(coords);
+  };
+
+  /* ---- Node drag and drop handlers ---- */
+  const handleVertexPointerDown = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number, pointIdx: number) => {
+    e.stopPropagation();
+    if (selectedTool === 'delete-point') {
+      const ent = entities[entityIdx];
+      if (ent.type === 'polyline' && ent.points) {
+        if (ent.points.length > 2) {
+          const newPoints = ent.points.filter((_, i) => i !== pointIdx);
+          const newEntities = [...entities];
+          newEntities[entityIdx] = {
+            ...ent,
+            points: newPoints,
+          };
+          onEntitiesChange(newEntities, true);
+        }
+      }
+    } else {
+      handleVertexDragStart(e, entityIdx, pointIdx);
+    }
+  };
+
+  const handleVertexDragStart = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number, pointIdx: number) => {
+    e.stopPropagation();
+    setActiveDrag({ type: 'vertex', entityIdx, pointIdx });
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
+  const handleCircleCenterDragStart = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number) => {
+    e.stopPropagation();
+    setActiveDrag({ type: 'center', entityIdx });
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleCircleRadiusDragStart = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number) => {
+    e.stopPropagation();
+    setActiveDrag({ type: 'radius', entityIdx });
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleHandlePointerUp = (e: React.PointerEvent<SVGCircleElement>) => {
+    if (activeDrag) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+      setActiveDrag(null);
+      onEntitiesChange(entities, true);
+    }
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    const rawCoords = getModelCoords(e.clientX, e.clientY);
+    if (!rawCoords) return;
+
+    let clickCoords = rawCoords;
+    const snapped = getSnappedCoords(e.clientX, e.clientY);
+    if (snapped && selectedTool !== 'brush') {
+      clickCoords = snapped;
+    }
+
+    if (selectedTool === 'select') {
+      setIsDragging(true);
+      setLastPos({ x: e.clientX, y: e.clientY });
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } else if (selectedTool === 'measure') {
+      setMeasureStart(clickCoords);
+      setMeasureEnd(clickCoords);
+      setIsDragging(true);
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } else if (selectedTool === 'brush') {
+      const newEntities = applyBrushDeform(clickCoords.x, clickCoords.y, entities);
+      onEntitiesChange(newEntities);
+      setIsDragging(true);
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } else if (selectedTool === 'line') {
+      if (drawPoints.length === 0) {
+        setDrawPoints([[clickCoords.x, clickCoords.y]]);
+      } else {
+        onEntitiesChange([...entities, {
+          type: 'polyline',
+          layer: 'OUTER',
+          points: [drawPoints[0], [clickCoords.x, clickCoords.y]],
+          closed: false
+        }]);
+        setDrawPoints([]);
+      }
+    } else if (selectedTool === 'polyline') {
+      setDrawPoints([...drawPoints, [clickCoords.x, clickCoords.y]]);
+    } else if (selectedTool === 'arc') {
+      if (arcStep === 0) {
+        setArcStart(clickCoords);
+        setArcStep(1);
+      } else if (arcStep === 1) {
+        setArcEnd(clickCoords);
+        setArcStep(2);
+      } else if (arcStep === 2) {
+        if (arcStart && arcEnd) {
+          const pts: [number, number][] = [];
+          for (let i = 0; i <= 16; i++) {
+            const t = i / 16;
+            const x = (1 - t) ** 2 * arcStart.x + 2 * (1 - t) * t * clickCoords.x + t ** 2 * arcEnd.x;
+            const y = (1 - t) ** 2 * arcStart.y + 2 * (1 - t) * t * clickCoords.y + t ** 2 * arcEnd.y;
+            pts.push([x, y]);
+          }
+          onEntitiesChange([...entities, {
+            type: 'polyline',
+            layer: 'OUTER',
+            points: pts,
+            closed: false
+          }]);
+        }
+        setArcStart(null);
+        setArcEnd(null);
+        setArcStep(0);
+      }
+    } else if (selectedTool === 'delete') {
+      const closest = findClosestEntity(clickCoords);
+      if (closest.index !== -1 && closest.dist < 6.0) {
+        onEntitiesChange(entities.filter((_, i) => i !== closest.index));
+      }
+    } else if (selectedTool === 'mark-hole') {
+      const closest = findClosestEntity(clickCoords);
+      if (closest.index !== -1 && closest.dist < 6.0) {
+        const newEntities = [...entities];
+        newEntities[closest.index] = {
+          ...newEntities[closest.index],
+          layer: newEntities[closest.index].layer === 'OUTER' ? 'HOLES' : 'OUTER',
+        };
+        onEntitiesChange(newEntities);
+      }
+    } else if (selectedTool === 'add-point') {
+      handleAddPointClick(clickCoords);
+    }
+  };
+
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!isDragging || selectedTool !== 'select') return;
-    const dx = e.clientX - lastPos.x;
-    const dy = e.clientY - lastPos.y;
-    
-    if (svgRef.current) {
-      const rect = svgRef.current.getBoundingClientRect();
-      const scaleX = 1 / rect.width;
-      const scaleY = 1 / rect.height;
-      setPan(p => ({ x: p.x + dx * scaleX, y: p.y + dy * scaleY }));
+    updateCursorFromEvent(e);
+
+    // If dragging a node control handle, update geometry and override panning
+    if (activeDrag) {
+      const rawCoords = getModelCoords(e.clientX, e.clientY);
+      if (!rawCoords) return;
+
+      let coords = rawCoords;
+      const snapped = getSnappedCoords(e.clientX, e.clientY);
+      if (snapped && activeDrag.type === 'vertex') {
+        const targetEnt = entities[activeDrag.entityIdx];
+        const selfPt = targetEnt.points?.[activeDrag.pointIdx!];
+        if (selfPt && Math.hypot(selfPt[0] - snapped.x, selfPt[1] - snapped.y) < 1.0) {
+          // Ignore self snap
+        } else {
+          coords = snapped;
+        }
+      }
+
+      const newEntities = [...entities];
+      const ent = { ...newEntities[activeDrag.entityIdx] };
+
+      if (activeDrag.type === 'vertex' && ent.points && activeDrag.pointIdx !== undefined) {
+        const newPoints = [...ent.points];
+        newPoints[activeDrag.pointIdx] = [coords.x, coords.y];
+        ent.points = newPoints;
+        newEntities[activeDrag.entityIdx] = ent;
+        onEntitiesChange(newEntities, false);
+      } else if (activeDrag.type === 'center') {
+        ent.cx = coords.x;
+        ent.cy = coords.y;
+        newEntities[activeDrag.entityIdx] = ent;
+        onEntitiesChange(newEntities, false);
+      } else if (activeDrag.type === 'radius' && ent.cx != null && ent.cy != null) {
+        const newR = Math.max(0.5, Math.abs(coords.x - ent.cx));
+        ent.r = newR;
+        newEntities[activeDrag.entityIdx] = ent;
+        onEntitiesChange(newEntities, false);
+      }
+      return;
+    }
+
+    if (!isDragging) return;
+
+    if (selectedTool === 'brush') {
+      const coords = getModelCoords(e.clientX, e.clientY);
+      if (coords) {
+        const newEntities = applyBrushDeform(coords.x, coords.y, entities);
+        onEntitiesChange(newEntities, false);
+      }
+      return;
     }
     
-    setLastPos({ x: e.clientX, y: e.clientY });
+    if (selectedTool === 'select') {
+      const dx = e.clientX - lastPos.x;
+      const dy = e.clientY - lastPos.y;
+      if (svgRef.current) {
+        const ctm = svgRef.current.getScreenCTM();
+        if (ctm) {
+          const inv = ctm.inverse();
+          const dxMm = dx * inv.a;
+          const dyMm = dy * inv.d;
+          onViewportChange({
+            x: viewX - dxMm,
+            y: viewY - dyMm,
+            w: viewWidth,
+            h: viewHeight,
+          });
+        }
+      }
+      setLastPos({ x: e.clientX, y: e.clientY });
+    } else if (selectedTool === 'measure') {
+      const rawCoords = getModelCoords(e.clientX, e.clientY);
+      if (rawCoords) {
+        let coords = rawCoords;
+        const snapped = getSnappedCoords(e.clientX, e.clientY);
+        if (snapped) {
+          coords = snapped;
+        }
+        setMeasureEnd(coords);
+      }
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     setIsDragging(false);
     e.currentTarget.releasePointerCapture(e.pointerId);
+    if (selectedTool === 'brush') {
+      onEntitiesChange(entities, true);
+    }
+  };
+
+  const handlePointerLeave = () => {
+    setIsDragging(false);
+    setCursorMm(null);
+    setSnapPoint(null);
   };
 
   const handleWheel = (e: React.WheelEvent<SVGSVGElement>) => {
+    if (selectedTool === 'brush' && e.shiftKey) {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -1.0 : 1.0;
+      const newRadius = Math.max(1.0, Math.min(150.0, brushRadius + delta));
+      onBrushRadiusChange?.(newRadius);
+      return;
+    }
+
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-    setZoom(z => Math.max(0.1, Math.min(50, z * zoomFactor)));
+    if (svgRef.current) {
+      const svg = svgRef.current;
+      const ctm = svg.getScreenCTM();
+      if (ctm) {
+        const pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const transformed = pt.matrixTransform(ctm.inverse());
+
+        const cx = transformed.x;
+        const cy = transformed.y;
+
+        const newW = Math.max(0.1, Math.min(5000, viewWidth / zoomFactor));
+        const newH = Math.max(0.1, Math.min(5000, viewHeight / zoomFactor));
+
+        const relX = (cx - viewX) / viewWidth;
+        const relY = (cy - viewY) / viewHeight;
+
+        const newX = cx - relX * newW;
+        const newY = cy - relY * newH;
+
+        onViewportChange({
+          x: newX,
+          y: newY,
+          w: newW,
+          h: newH,
+        });
+      }
+    }
   };
 
-  const handleFit = () => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
+  const handleDoubleClick = () => {
+    if (selectedTool === 'polyline' && drawPoints.length > 1) {
+      onEntitiesChange([...entities, {
+        type: 'polyline',
+        layer: 'OUTER',
+        points: drawPoints,
+        closed: true
+      }]);
+      setDrawPoints([]);
+    }
   };
+
+  // Vertical ruler range expressed in model space (Y-up), largest value at the top.
+  const vRulerMin = -(viewY + viewHeight);
+  const vRulerMax = -viewY;
+
+  const currentZoomPercentage = Math.round((baseWidth / viewWidth) * 100);
+
+  // Measure math details
+  const distance = measureStart && measureEnd ? Math.hypot(measureEnd.x - measureStart.x, measureEnd.y - measureStart.y) : 0;
+  const midX = measureStart && measureEnd ? (measureStart.x + measureEnd.x) / 2 : 0;
+  const midY = measureStart && measureEnd ? (measureStart.y + measureEnd.y) / 2 : 0;
+
+  const showGeometry = entities && entities.length > 0;
 
   return (
     <section className="panel dxf-panel">
@@ -73,12 +634,12 @@ export function DxfPreview({ result, selectedTool, showGrid }: DxfPreviewProps) 
           <h2>DXF Preview</h2>
         </div>
         <div className="mini-controls">
-          <button onClick={handleFit} title="Fit to view">Fit</button>
-          <button onClick={() => setGridEnabled((current) => !current)}>
+          <button onClick={onFitToView} title="Fit to view">Fit</button>
+          <button onClick={onToggleGrid}>
             {gridEnabled ? 'Grid On' : 'Grid Off'}
           </button>
-          <button onClick={() => setZoom(z => z * 1.2)} title="Zoom In">+</button>
-          <button onClick={() => setZoom(z => z / 1.2)} title="Zoom Out">-</button>
+          <button onClick={onZoomIn} title="Zoom In">+</button>
+          <button onClick={onZoomOut} title="Zoom Out">-</button>
         </div>
       </div>
 
@@ -97,108 +658,309 @@ export function DxfPreview({ result, selectedTool, showGrid }: DxfPreviewProps) 
             onChange={(event) => setHoleLayerEnabled(event.target.checked)}
           /> HOLES
         </label>
-        <span className="selected-tool" style={{ color: 'var(--muted)', fontStyle: 'italic', visibility: 'hidden' }}>
-          {selectedTool === 'select' ? 'Pan active' : 'Tool inactive'}
-        </span>
       </div>
 
-      <div className={`cad-preview ${gridEnabled ? 'with-grid' : ''}`}>
-        <div className="viewport-label">MODEL SPACE · mm</div>
-        
-        {gridEnabled && (
-          <div className="viewport-grid-label" style={{ position: 'absolute', top: 10, left: 160, color: 'var(--muted)', fontSize: '11px', pointerEvents: 'none', zIndex: 2 }}>
-            GRID: 10mm
-          </div>
-        )}
+      <div className="canvas-area">
+        <div className="ruler-frame">
+          <button className="ruler-corner" onClick={onFitToView} title="Reset zoom to fit">⤢</button>
+          <Ruler orientation="horizontal" min={viewX} max={viewX + viewWidth} />
+          <Ruler orientation="vertical" min={vRulerMin} max={vRulerMax} flip />
 
-        {result?.report?.entities ? (
-          <>
-            <svg 
-              ref={svgRef}
-              viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`} 
-              className="native-dxf" 
-              role="img" 
-              aria-label="Native DXF preview"
-              style={{ width: '100%', height: '100%', cursor: selectedTool === 'select' ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              onPointerLeave={handlePointerUp}
-              onWheel={handleWheel}
-            >
-              {/* Bounding box dimensions overlay (drawn outside the flipped scale so text is upright) */}
-              {outerLayerEnabled && result.report.bboxWidthMm != null && result.report.bboxHeightMm != null && (
-                <g className="dimension-overlay" style={{ opacity: 0.6 }}>
-                  {/* Width dimension */}
-                  <path d={`M ${result.report.bboxMinXMm || 0} ${-(result.report.bboxMaxYMm || 0) - 5} L ${(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm} ${-(result.report.bboxMaxYMm || 0) - 5}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
-                  <text x={(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm / 2} y={-(result.report.bboxMaxYMm || 0) - 7} fill="var(--accent)" fontSize="4" textAnchor="middle" className="tabular-nums">
-                    {result.report.bboxWidthMm.toFixed(2)}
-                  </text>
-                  
-                  {/* Height dimension */}
-                  <path d={`M ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0)} L ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
-                  <text x={(result.report.bboxMinXMm || 0) - 7} y={-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2} fill="var(--accent)" fontSize="4" textAnchor="middle" transform={`rotate(-90 ${(result.report.bboxMinXMm || 0) - 7} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2})`} className="tabular-nums">
-                    {result.report.bboxHeightMm.toFixed(2)}
-                  </text>
-                </g>
-              )}
-
-              <g transform="scale(1, -1)">
-                {result.report.entities.map((entity, idx) => {
-                  const isHole = entity.layer === 'HOLES';
-                  if (isHole && !holeLayerEnabled) return null;
-                  if (!isHole && !outerLayerEnabled) return null;
-                  
-                  const className = isHole ? 'hole-line' : 'outer-line';
-                  
-                  if (entity.type === 'circle') {
-                    return (
-                      <circle 
-                        key={idx} 
-                        className={className} 
-                        cx={entity.cx} 
-                        cy={entity.cy} 
-                        r={entity.r} 
-                        fill="none"
-                        strokeWidth="0.5"
-                      />
-                    );
-                  } else if (entity.type === 'polyline' && entity.points) {
-                    const d = entity.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ') + (entity.closed ? ' Z' : '');
-                    return (
-                      <path 
-                        key={idx} 
-                        className={className} 
-                        d={d}
-                        fill="none"
-                        strokeWidth="0.5"
-                      />
-                    );
-                  }
-                  return null;
-                })}
-              </g>
-            </svg>
-            
-            {/* Scale Bar Overlay */}
-            <div style={{ position: 'absolute', bottom: 20, right: 20, width: '100px', pointerEvents: 'none', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-              <div style={{ color: 'var(--text)', opacity: 0.6, fontSize: '10px', marginBottom: '2px' }} className="tabular-nums">
-                {svgRef.current ? Math.round((100 / svgRef.current.clientWidth) * viewWidth) : 10} mm
-              </div>
-              <div style={{ borderBottom: '2px solid var(--text)', borderLeft: '2px solid var(--text)', borderRight: '2px solid var(--text)', opacity: 0.4, height: '6px', width: '100px' }} />
+          <div className={`cad-preview ${gridEnabled ? 'with-grid' : ''}`}>
+            <div className="viewport-label">
+              {selectedTool === 'line' ? 'LINE TOOL · Click start & end' :
+               selectedTool === 'polyline' ? 'POLYLINE TOOL · Click to add, double-click to close' :
+               selectedTool === 'arc' ? `ARC TOOL · Click 3 points (${arcStep === 0 ? 'Start' : arcStep === 1 ? 'End' : 'Peak'})` :
+               selectedTool === 'delete' ? 'DELETE TOOL · Click element to delete' :
+               selectedTool === 'delete-point' ? 'DELETE POINT · Click red handle to delete vertex & bridge line' :
+               selectedTool === 'mark-hole' ? 'MARK HOLE · Click element to toggle layer' :
+               selectedTool === 'add-point' ? 'ADD POINT · Click segment to add vertex' :
+               selectedTool === 'measure' ? 'MEASURE TOOL · Drag to measure distance' :
+               selectedTool === 'select' ? 'SELECT TOOL · Click & drag nodes to edit geometry' :
+               selectedTool === 'brush' ? `BRUSH TOOL · Drag to deform vertices outward (Shape: ${brushShape === 'circle' ? 'Ball' : 'Cube'}, Radius: ${brushRadius}mm)` :
+               'MODEL SPACE · mm'}
             </div>
-          </>
-        ) : result ? (
-          <div className="empty-state">
-            <strong>Processing DXF</strong>
-            <span>Waiting for geometry...</span>
+
+            {showGeometry ? (
+              <svg
+                ref={svgRef}
+                viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`}
+                className="native-dxf"
+                role="img"
+                aria-label="Native DXF preview"
+                style={{ width: '100%', height: '100%', cursor: selectedTool === 'select' ? (activeDrag ? 'move' : isDragging ? 'grabbing' : 'grab') : selectedTool === 'measure' ? 'crosshair' : selectedTool === 'brush' ? 'pointer' : 'default' }}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerLeave={handlePointerLeave}
+                onDoubleClick={handleDoubleClick}
+                onWheel={handleWheel}
+              >
+                {/* Bounding box dimensions overlay */}
+                {outerLayerEnabled && result?.report?.bboxWidthMm != null && result?.report?.bboxHeightMm != null && (
+                  <g className="dimension-overlay" style={{ opacity: 0.6 }}>
+                    <path d={`M ${result.report.bboxMinXMm || 0} ${-(result.report.bboxMaxYMm || 0) - 5} L ${(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm} ${-(result.report.bboxMaxYMm || 0) - 5}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
+                    <text x={(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm / 2} y={-(result.report.bboxMaxYMm || 0) - 7} fill="var(--accent)" fontSize="4" textAnchor="middle" className="tabular-nums">
+                      {result.report.bboxWidthMm.toFixed(2)}
+                    </text>
+                    <path d={`M ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0)} L ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
+                    <text x={(result.report.bboxMinXMm || 0) - 7} y={-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2} fill="var(--accent)" fontSize="4" textAnchor="middle" transform={`rotate(-90 ${(result.report.bboxMinXMm || 0) - 7} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2})`} className="tabular-nums">
+                      {result.report.bboxHeightMm.toFixed(2)}
+                    </text>
+                  </g>
+                )}
+
+                <g transform="scale(1, -1)">
+                  {entities.map((entity, idx) => {
+                    const isHole = entity.layer === 'HOLES';
+                    if (isHole && !holeLayerEnabled) return null;
+                    if (!isHole && !outerLayerEnabled) return null;
+                    const className = isHole ? 'hole-line' : 'outer-line';
+                    if (entity.type === 'circle') {
+                      return (
+                        <circle key={idx} className={className} cx={entity.cx} cy={entity.cy} r={entity.r} fill="none" strokeWidth="0.5" />
+                      );
+                    } else if (entity.type === 'polyline' && entity.points) {
+                      const d = entity.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ') + (entity.closed ? ' Z' : '');
+                      return (
+                        <path key={idx} className={className} d={d} fill="none" strokeWidth="0.5" />
+                      );
+                    }
+                    return null;
+                  })}
+
+                  {/* Interactive node editing handles */}
+                  {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
+                    const isHole = entity.layer === 'HOLES';
+                    if (isHole && !holeLayerEnabled) return null;
+                    if (!isHole && !outerLayerEnabled) return null;
+
+                    const handleScale = Math.max(0.2, viewWidth / 250);
+
+                    if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
+                      // Circle handles are not relevant for delete-point mode
+                      if (selectedTool === 'delete-point') return null;
+                      return (
+                        <g key={entityIdx}>
+                          {/* Center handle */}
+                          <circle
+                            cx={entity.cx}
+                            cy={entity.cy}
+                            r={1.2 * handleScale}
+                            fill="var(--accent)"
+                            stroke="white"
+                            strokeWidth={0.3 * handleScale}
+                            style={{ cursor: 'move' }}
+                            onPointerDown={(e) => handleCircleCenterDragStart(e, entityIdx)}
+                            onPointerUp={handleHandlePointerUp}
+                          />
+                          {/* Radius handle (perimeter) */}
+                          <circle
+                            cx={entity.cx + entity.r}
+                            cy={entity.cy}
+                            r={1.2 * handleScale}
+                            fill="#ffcc00"
+                            stroke="white"
+                            strokeWidth={0.3 * handleScale}
+                            style={{ cursor: 'ew-resize' }}
+                            onPointerDown={(e) => handleCircleRadiusDragStart(e, entityIdx)}
+                            onPointerUp={handleHandlePointerUp}
+                          />
+                        </g>
+                      );
+                    } else if (entity.type === 'polyline' && entity.points) {
+                      return (
+                        <g key={entityIdx}>
+                          {entity.points.map((pt, ptIdx) => (
+                            <circle
+                              key={ptIdx}
+                              cx={pt[0]}
+                              cy={pt[1]}
+                              r={1.2 * handleScale}
+                              fill={selectedTool === 'delete-point' ? '#ff3b30' : 'var(--accent)'} // red color for delete points!
+                              stroke="white"
+                              strokeWidth={0.3 * handleScale}
+                              style={{ cursor: selectedTool === 'delete-point' ? 'pointer' : 'move' }}
+                              onPointerDown={(e) => handleVertexPointerDown(e, entityIdx, ptIdx)}
+                              onPointerUp={handleHandlePointerUp}
+                            />
+                          ))}
+                        </g>
+                      );
+                    }
+                    return null;
+                  })}
+
+                  {/* Draw helper snaps */}
+                  {snapPoint && (
+                    <rect
+                      x={snapPoint.x - 1.2}
+                      y={snapPoint.y - 1.2}
+                      width="2.4"
+                      height="2.4"
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeWidth="0.4"
+                    />
+                  )}
+
+                  {/* Proportional Brush zone representation (Ball/Cube shape) */}
+                  {selectedTool === 'brush' && cursorMm && (
+                    <g style={{ opacity: 0.85 }}>
+                      {brushShape === 'circle' ? (
+                        <circle
+                          cx={cursorMm.x}
+                          cy={cursorMm.y}
+                          r={brushRadius}
+                          fill="var(--accent-soft)"
+                          style={{ pointerEvents: 'none' }}
+                        />
+                      ) : (
+                        <rect
+                          x={cursorMm.x - brushRadius}
+                          y={cursorMm.y - brushRadius}
+                          width={2 * brushRadius}
+                          height={2 * brushRadius}
+                          fill="var(--accent-soft)"
+                          style={{ pointerEvents: 'none' }}
+                        />
+                      )}
+                    </g>
+                  )}
+
+                  {/* Draw helper templates in progress */}
+                  {drawPoints.length > 0 && (
+                    <polyline
+                      points={drawPoints.map(p => `${p[0]},${p[1]}`).join(' ')}
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeWidth="0.6"
+                      strokeDasharray="2,2"
+                    />
+                  )}
+                  {drawPoints.length > 0 && cursorMm && (
+                    <line
+                      x1={drawPoints[drawPoints.length - 1][0]}
+                      y1={drawPoints[drawPoints.length - 1][1]}
+                      x2={cursorMm.x}
+                      y2={cursorMm.y}
+                      stroke="var(--accent)"
+                      strokeWidth="0.5"
+                      strokeDasharray="2,2"
+                    />
+                  )}
+
+                  {arcStart && arcEnd && cursorMm && (
+                    <path
+                      d={(() => {
+                        const pts: [number, number][] = [];
+                        for (let i = 0; i <= 16; i++) {
+                          const t = i / 16;
+                          const x = (1 - t) ** 2 * arcStart.x + 2 * (1 - t) * t * cursorMm.x + t ** 2 * arcEnd.x;
+                          const y = (1 - t) ** 2 * arcStart.y + 2 * (1 - t) * t * cursorMm.y + t ** 2 * arcEnd.y;
+                          pts.push([x, y]);
+                        }
+                        return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ');
+                      })()}
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeWidth="0.6"
+                      strokeDasharray="2,2"
+                    />
+                  )}
+                  {arcStart && arcStep === 1 && cursorMm && (
+                    <line
+                      x1={arcStart.x}
+                      y1={arcStart.y}
+                      x2={cursorMm.x}
+                      y2={cursorMm.y}
+                      stroke="var(--accent)"
+                      strokeWidth="0.5"
+                      strokeDasharray="2,2"
+                    />
+                  )}
+
+                  {/* Distance measure overlay */}
+                  {measureStart && measureEnd && (
+                    <g className="measure-overlay">
+                      <line
+                        x1={measureStart.x}
+                        y1={measureStart.y}
+                        x2={measureEnd.x}
+                        y2={measureEnd.y}
+                        stroke="var(--accent)"
+                        strokeWidth="0.6"
+                        strokeDasharray="2,2"
+                      />
+                      <circle cx={measureStart.x} cy={measureStart.y} r="1.5" fill="none" stroke="var(--accent)" strokeWidth="0.5" />
+                      <circle cx={measureEnd.x} cy={measureEnd.y} r="1.5" fill="none" stroke="var(--accent)" strokeWidth="0.5" />
+
+                      <g transform={`translate(${midX}, ${midY}) scale(1, -1)`}>
+                        <rect
+                          x="-20"
+                          y="-3.5"
+                          width="40"
+                          height="7"
+                          fill="var(--panel)"
+                          stroke="var(--accent)"
+                          strokeWidth="0.4"
+                          rx="1"
+                        />
+                        <text
+                          x="0"
+                          y="1.2"
+                          fill="var(--accent)"
+                          fontSize="4.2"
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fontWeight="bold"
+                          className="tabular-nums"
+                        >
+                          {distance.toFixed(2)} mm
+                        </text>
+                      </g>
+                    </g>
+                  )}
+                </g>
+              </svg>
+            ) : result ? (
+              <div className="empty-state">
+                <strong>Processing DXF</strong>
+                <span>Waiting for geometry...</span>
+              </div>
+            ) : (
+              <div className="empty-state">
+                <strong>No DXF yet</strong>
+                <span>Run conversion to populate this review panel.</span>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="empty-state">
-            <strong>No DXF yet</strong>
-            <span>Run conversion to populate this review panel.</span>
-          </div>
-        )}
+        </div>
+
+        <div className="canvas-status-bar">
+          <span>
+            X <strong className="tabular-nums">{cursorMm ? cursorMm.x.toFixed(2) : '—'}</strong>
+          </span>
+          <span>
+            Y <strong className="tabular-nums">{cursorMm ? cursorMm.y.toFixed(2) : '—'}</strong>
+          </span>
+          {selectedTool === 'measure' && measureStart && measureEnd && (
+            <span style={{ marginLeft: '16px', color: 'var(--accent)' }}>
+              Distance: <strong className="tabular-nums">{distance.toFixed(2)} mm</strong>
+            </span>
+          )}
+          {selectedTool === 'brush' && (
+            <span style={{ marginLeft: '16px', color: 'var(--accent)' }}>
+              Brush: <strong className="tabular-nums">{brushRadius.toFixed(1)} mm</strong> ({brushShape === 'circle' ? 'Ball' : 'Cube'})
+            </span>
+          )}
+          <span style={{ marginLeft: 'auto' }}>
+            Zoom <strong className="tabular-nums">{currentZoomPercentage}%</strong>
+          </span>
+          <span>
+            Tool <strong>{selectedTool}</strong>
+          </span>
+        </div>
       </div>
     </section>
   );
