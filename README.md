@@ -1,115 +1,89 @@
-# DXFify — Photo to DXF Dimensional Reconstruction
+# DXFify: Photographic Dimensional Reconstruction
 
-DXFify converts a single photograph of a flat object lying on a calibrated sheet (with ArUco markers) into a metrically-scaled 2D DXF file at true 1:1 scale, suitable for direct laser-cutting, CAD modeling, and manufacturing.
-
----
-
-## 1. System Architecture
-
-The project consists of two core components:
-1. **Python Pipeline Worker (`dxferpy/`)**:
-   - Performs AI segmentation via the BiRefNet model to isolate the object boundary.
-   - Detects the 4 ArUco corners to warp perspective and establish physical pixel-to-millimeter coordinates.
-   - Fits geometric elements (polylines, straight segments, snapped orthogonal lines, and circular arcs) using custom OpenCV and algebraic solvers.
-   - Runs as a persistent Flask HTTP microservice to keep the BiRefNet model warm.
-2. **Web Dashboard (`web/`)**:
-   - Renders a multi-layer interactive canvas displaying vector shapes overlaid on original inputs.
-   - Exposes extensive conversion settings to tune the segmentation and vectorization engines.
-   - Provides an in-place CAD editor to inspect coordinates, delete geometries, snap points, mark holes, and brush-deform contours.
-   - Runs as an Express server proxying API requests to the Python microservice, built with React, Vite, and TypeScript.
+DXFify converts a single photograph of a flat object lying on a sheet with ArUco corners into a metrically accurate 2D DXF vector file. The output is scaled 1:1 in millimeters, suitable for laser cutting or CAD import.
 
 ---
 
-## 2. Setup & Execution
+## Codebase Architecture
 
-### A. Python Backend (Pipeline Worker)
-Ensure Python 3.10+ is installed.
+### Python Backend (`dxferpy/`)
+- **`pipeline_worker.py`**: Hosts a persistent Flask server (default port 8788). Preloads the `birefnet-general-lite` segmentation model to avoid the overhead of loading weights on every image run. It coordinates the segmentation, perspective correction, and vectorization.
+- **`segment_object.py`**: Identifies ArUco markers to compute camera perspective matrices and warps the raw image to top-down flat coordinates. Uses the preloaded segmentation model to generate binary transparency masks.
+- **`vectorize_smart.py`**: Extracts contours from the binary mask, runs Douglas-Peucker simplification, snaps lines close to dominant directions, identifies circular regions, and fits LWPOLYLINE structures with bulges for arcs.
+- **`render_dxf.py`**: Generates high-fidelity preview images from DXF coordinates to overlay vectors on top of original raster previews.
 
-1. Navigate to the backend directory:
-   ```bash
-   cd dxferpy
-   ```
-2. Set up a virtual environment and install dependencies:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
-3. Run the persistent server:
-   ```bash
-   python3 pipeline_worker.py
-   ```
-   *The Flask microservice listens on port 8788. It preloads the `birefnet-general-lite` model.*
+### Node/Express Server (`web/server/`)
+- **`index.ts`**: Express backend (default port 3000) that handles multipart image uploads, manages job isolation under the `web/uploads/` folder, and relays conversion parameters to the Python server.
 
-### B. Web Dashboard
-Ensure Node.js 18+ is installed.
-
-1. Navigate to the web directory:
-   ```bash
-   cd web
-   ```
-2. Install npm packages:
-   ```bash
-   npm install
-   ```
-3. Run the development server:
-   ```bash
-   npm run dev
-   ```
-   *The Express server sits on port 3000, hosting the React interface and proxying requests to the Python worker.*
+### React Client (`web/src/`)
+- **`App.tsx`**: Application state container. Manages history stacks (undo/redo), active geometries, zoom states, tool selections, and image uploads.
+- **`components/Workspace.tsx`**: Grid layout shell. Coordinates coordinate alignment between raster and vector panels. Implements custom drag handlers to adjust toolbar width and bottom panel height in-place.
+- **`components/DxfPreview.tsx`**: Interactive CAD editor. Handles canvas pans, zoom scaling, snap-to-vertex logic, ruler rendering, and mouse event routing for editing tools.
+- **`components/Toolbar.tsx`**: Tool selection grid and settings toggles for the physical deformation brush.
+- **`components/SettingsPanel.tsx`**: Dynamic input controls mapping optional segmentation, contour filtering, and vectorization parameters to the API request.
+- **`components/ReportPanel.tsx`**: Displays calibration metrics, computed tolerances, reprojection warnings, and exact bounding box sizes.
+- **`components/ArtifactList.tsx`**: File downloader panel for output files (DXF, masks, debug previews, JSON reports).
 
 ---
 
-## 3. Calibration Sheet Specification
+## Installation & Execution
 
-To obtain true 1:1 scale, the object must be photographed on a flat sheet with **4 ArUco markers** at the corners.
+### 1. Python Backend
+Required: Python 3.10+ and OpenCV with ArUco support.
 
-### Coordinates & Placement
-- **Dictionary**: `DICT_4X4_50` (IDs: 0, 1, 2, 3)
-- **Arrangement**:
-  - **ID 0**: Top-left corner
-  - **ID 1**: Top-right corner
-  - **ID 2**: Bottom-right corner
-  - **ID 3**: Bottom-left corner
-- **Layout Margins**:
-  - The expected marker offsets from the sheet corners default to `32.2mm` X and `34.2mm` Y.
-  - The expected clearing radius around the center of each marker is `22.0mm`.
-  - These values can be fully customized in the **ArUco Calibration** section under Conversion Settings.
+```bash
+cd dxferpy
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python3 pipeline_worker.py
+```
 
----
+### 2. Frontend Dashboard
+Required: Node.js 18+.
 
-## 4. Conversion Settings
-
-Users can customize parameters in the settings panel to optimize extraction quality:
-
-- **Sheet Size**:
-  - Select between A1, A2, A3, A4, A5, Letter, and Legal templates.
-- **Segmentation**:
-  - **Mask threshold** (Default: 240, Range: 1–255): Probability threshold for binarizing the AI segmentation mask.
-  - **Erosion kernel** (Default: 3, Range: 1–9, odd): Morphological kernel size to clean up mask outlines.
-  - **Erosion iterations** (Default: 1, Range: 0–5): Number of erosion passes.
-- **Contour Filtering**:
-  - **Min hole area** (Default: 500 px²): Contours classified as holes smaller than this threshold are filtered out.
-  - **Min outer area** (Default: 100 px²): Main contours smaller than this threshold are ignored.
-  - **Circle detection ratio** (Default: 0.85, Range: 0.5–1.0): Contours with area-to-enclosing-circle ratios above this value are fit as circles.
-- **Vectorization**:
-  - **Epsilon min / max** (Default: 0.5 / 2.5): Controls Douglas-Peucker simplification tolerance based on contour perimeter.
-  - **Snap angle** (Default: 10°): Maximum angular difference allowed to snap lines to dominant orthogonal axes.
-  - **Snap min length** (Default: 20 px): Minimum segment length eligible for orthogonal snapping.
+```bash
+cd web
+npm install
+npm run dev
+```
 
 ---
 
-## 5. CAD Toolbar & Canvas Editing
+## Calibration Sheet Layout
 
-The interface includes a powerful vertex and geometry editor:
+The system extracts millimeter measurements by detecting 4 ArUco markers at the page corners:
+- **Marker Dictionary**: `DICT_4X4_50`
+- **IDs**: 0 (top-left), 1 (top-right), 2 (bottom-right), 3 (bottom-left)
+- **Marker Positions**: Centers default to `32.2mm` X and `34.2mm` Y from the page edge. The region cleared around each marker center is `22.0mm`. These dimensions can be adjusted in the settings panel to match any custom calibration grid.
 
-1. **Pan / Inspect (↖)**: Navigate the viewport. Click on lines to inspect vertex coordinates. Drag vertex handles (blue) to refine outlines. Drag circle centers (blue) or radial handles (yellow) to translate or resize circles.
-2. **Deformation Brush (🖌)**: Bend and shape geometries like a physical ball/cube falling on fabric. Vertices falling within the brush's boundary are pushed outward to its perimeter, letting you shape curves effortlessly. Toggles for Circle (●) and Square (■) brushes are available. Hold **Shift + scroll wheel** to change the brush size.
-3. **Snap Toggle (⌖)**: Vertices and circle centers automatically snap to neighboring coordinates within a `6mm` distance for perfect alignments.
-4. **Mark Hole (○)**: Select any closed polyline and re-classify it as a hole to assign it to the `HOLES` layer (rendered in red in CAD, indicating a cut profile).
-5. **Delete Element (⌫)**: Click on any circle or polyline to delete the entire shape.
-6. **Delete Point (−)**: Click on any vertex of a polyline to delete it while keeping the outline connected.
-7. **Add Point (+)**: Click anywhere on a polyline's segment to insert a new vertex.
-8. **Undo/Redo (↶ / ↷)**: History is saved at the end of each drag, click, or edit stroke so you can undo/redo entire operations at once (`Ctrl+Z` / `Ctrl+Y`).
-9. **Grid Toggle**: Overlay a metric CAD grid on the previews.
-10. **In-place Splitters**: Hover and drag the thin orange lines at the boundaries of the Left Toolbar or the Bottom Panel row to resize them vertically or horizontally.
+---
+
+## Conversion Parameter Details
+
+The settings panel exposes the following thresholds to optimize edge fitting:
+
+### Segmentation
+- **Mask threshold** (1–255, default 240): Cutoff value to convert the raw neural network probability map into a binary black-and-white mask. Lower values expand the boundary; higher values shrink it.
+- **Erosion kernel** (1–9, odd, default 3): Size of the pixel grid used to shave off edge noise.
+- **Erosion iterations** (default 1): Number of erosion passes.
+
+### Contour Filtering
+- **Min hole area** (default 500 px²): Filters out interior cutouts smaller than this value to ignore dust, glare, or marker reflections.
+- **Min outer area** (default 100 px²): Ignores tiny standalone objects.
+- **Circle det. ratio** (0.5–1.0, default 0.85): Threshold for circle matching. If a contour's area divided by the area of its minimum enclosing circle exceeds this ratio, it is fit as a circle instead of a polyline.
+
+### Vectorization & Fitting
+- **Epsilon min / max** (default 0.5 / 2.5): Douglas-Peucker simplification limits. Defines the maximum distance deviation between the raw contour and the simplified polyline.
+- **Snap angle** (1–45°, default 10°): Maximum deviation allowed to snap a segment to one of the image's dominant orthogonal directions.
+- **Snap min length** (default 20 px): Segments shorter than this threshold bypass orthogonal snapping to preserve small custom curves.
+
+---
+
+## CAD Editing & Resizing
+
+- **Vertex Adjustments**: Active in Select tool (`↖`). Drag handles to move vertices. Snapping automatically aligns moved points to adjacent vertices when within `6mm`.
+- **Physical Deformation Brush (`🖌`)**: Simulates a rigid sphere (Circle `●`) or cube (Square `■`) pushing against a flexible contour. Clicking and dragging pushes vertices outward to the brush boundary, allowing smooth bending of jagged shapes. Resize the brush by holding **Shift** and rolling the **mouse scroll wheel**.
+- **Splitter Dragging**: Resize the docked panel columns and rows by dragging the divider borders directly.
+- **Hole Marking (`○`)**: Select any outline to switch its layer to `HOLES` (colored red in standard CAD files).
+- **Atomized History**: Every complete edit, drag, or brush stroke is recorded as a single frame, allowing standard `Ctrl+Z` (Undo) and `Ctrl+Y` (Redo) operations.
