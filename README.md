@@ -9,7 +9,7 @@ DXFify converts a single photograph of a flat object lying on a sheet with ArUco
 ### Python Backend (`dxferpy/`)
 - **`pipeline_worker.py`**: Hosts a persistent Flask server (default port 8788). Preloads the `birefnet-general-lite` segmentation model to avoid the overhead of loading weights on every image run. It coordinates the segmentation, perspective correction, and vectorization.
 - **`segment_object.py`**: Identifies ArUco markers to compute camera perspective matrices and warps the raw image to top-down flat coordinates. Uses the preloaded segmentation model to generate binary transparency masks.
-- **`vectorize_smart.py`**: Extracts contours from the binary mask, runs Douglas-Peucker simplification, snaps lines close to dominant directions, identifies circular regions, and fits LWPOLYLINE structures with bulges for arcs.
+- **`vectorize_smart.py`**: Extracts contours from the binary mask, runs Douglas-Peucker simplification, snaps lines close to dominant directions, identifies circular regions, fits LWPOLYLINE structures with bulges for arcs, and handles high-frequency detail engraving line extraction.
 - **`render_dxf.py`**: Generates high-fidelity preview images from DXF coordinates to overlay vectors on top of original raster previews.
 
 ### Node/Express Server (`web/server/`)
@@ -21,7 +21,7 @@ DXFify converts a single photograph of a flat object lying on a sheet with ArUco
 - **`components/DxfPreview.tsx`**: Interactive CAD editor. Handles canvas pans, zoom scaling, snap-to-vertex logic, ruler rendering, and mouse event routing for editing tools.
 - **`components/Toolbar.tsx`**: Tool selection grid and settings toggles for the physical deformation brush.
 - **`components/SettingsPanel.tsx`**: Dynamic input controls mapping optional segmentation, contour filtering, and vectorization parameters to the API request.
-- **`components/ReportPanel.tsx`**: Displays calibration metrics, computed tolerances, reprojection warnings, and exact bounding box sizes.
+- **`components/ReportPanel.tsx`**: Displays ArUco detection accuracy, computed tolerances, reprojection warnings, and exact bounding box sizes.
 - **`components/ArtifactList.tsx`**: File downloader panel for output files (DXF, masks, debug previews, JSON reports).
 
 ---
@@ -78,6 +78,11 @@ The settings panel exposes the following thresholds to optimize edge fitting:
 - **Snap angle** (1–45°, default 10°): Maximum deviation allowed to snap a segment to one of the image's dominant orthogonal directions.
 - **Snap min length** (default 20 px): Segments shorter than this threshold bypass orthogonal snapping to preserve small custom curves.
 
+### Detail Engraving (Optional)
+- **Detect Details** (toggle, default false): Extracts surface textures, grooves, and embossed elements inside the object (such as lettering, faces on coins, or bezel grooves on cases) as open vector paths.
+- **Sensitivity threshold 1 & 2** (default 50 / 150): Double Canny thresholds used for fine-line edge detection. Lower values detect faint surface textures.
+- **CAD Representation**: These elements are placed on the `DETAILS` layer (colored green/emerald in CAD previews and exported DXFs) to separate them from cuts (`OUTER`/`HOLES`), allowing laser software to automatically map them to low-power score/engraving settings.
+
 ---
 
 ## CAD Editing & Resizing
@@ -86,4 +91,5 @@ The settings panel exposes the following thresholds to optimize edge fitting:
 - **Physical Deformation Brush (`🖌`)**: Simulates a rigid sphere (Circle `●`) or cube (Square `■`) pushing against a flexible contour. Clicking and dragging pushes vertices outward to the brush boundary, allowing smooth bending of jagged shapes. Resize the brush by holding **Shift** and rolling the **mouse scroll wheel**.
 - **Splitter Dragging**: Resize the docked panel columns and rows by dragging the divider borders directly.
 - **Hole Marking (`○`)**: Select any outline to switch its layer to `HOLES` (colored red in standard CAD files).
+- **Layer Visibility**: Independently toggle the visibility of the `OUTER`, `HOLES`, and `DETAILS` layers using the checkboxes located below the zoom options.
 - **Atomized History**: Every complete edit, drag, or brush stroke is recorded as a single frame, allowing standard `Ctrl+Z` (Undo) and `Ctrl+Y` (Redo) operations.
