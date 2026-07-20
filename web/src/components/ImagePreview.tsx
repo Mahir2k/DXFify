@@ -92,7 +92,7 @@ export function ImagePreview({
     },
   }[selectedTab];
 
-  // Dynamically load image dimensions to stay robust
+  
   useEffect(() => {
     if (!activeImage) {
       setNaturalSize(null);
@@ -123,7 +123,7 @@ export function ImagePreview({
   const w = activeViewport.w;
   const h = activeViewport.h;
 
-  // Viewport in pixel space
+  
   const imgX = x * scale;
   const imgY = height + y * scale;
   const imgW = w * scale;
@@ -250,7 +250,7 @@ export function ImagePreview({
                   height={height}
                 />
 
-                {/* Glowing vector overlay */}
+                {}
                 <g style={{ opacity: 0.8, pointerEvents: 'none' }}>
                   {entities.map((entity, idx) => {
                     const isHole = entity.layer === 'HOLES';

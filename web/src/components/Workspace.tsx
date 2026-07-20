@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type {
   ConversionErrorDetails,
   ConversionResult,
@@ -73,14 +74,79 @@ export function Workspace({
   onBrushShapeChange,
   onBrushRadiusChange,
 }: WorkspaceProps) {
+  
+  const [toolboxWidth, setToolboxWidth] = useState(72);
+  const [bottomHeight, setBottomHeight] = useState(176);
+
+  
+  const [isResizingTools, setIsResizingTools] = useState(false);
+  const [isResizingBottom, setIsResizingBottom] = useState(false);
+
+  const handleToolsResizeStart = (e: React.PointerEvent) => {
+    setIsResizingTools(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleToolsResizeMove = (e: React.PointerEvent) => {
+    if (!isResizingTools) return;
+    const grid = document.querySelector('.workspace-grid');
+    if (grid) {
+      const rect = grid.getBoundingClientRect();
+      const newWidth = Math.max(50, Math.min(250, e.clientX - rect.left));
+      setToolboxWidth(newWidth);
+    }
+  };
+
+  const handleToolsResizeEnd = (e: React.PointerEvent) => {
+    setIsResizingTools(false);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  const handleBottomResizeStart = (e: React.PointerEvent) => {
+    setIsResizingBottom(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const handleBottomResizeMove = (e: React.PointerEvent) => {
+    if (!isResizingBottom) return;
+    const grid = document.querySelector('.workspace-grid');
+    if (grid) {
+      const rect = grid.getBoundingClientRect();
+      const newHeight = Math.max(80, Math.min(rect.height - 150, rect.bottom - e.clientY));
+      setBottomHeight(newHeight);
+    }
+  };
+
+  const handleBottomResizeEnd = (e: React.PointerEvent) => {
+    setIsResizingBottom(false);
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
   const gridClass = [
     'workspace-grid',
     !showToolbox && 'no-toolbox',
     !showBottomPanels && 'no-bottom',
   ].filter(Boolean).join(' ');
 
+  
+  const gridStyle = {
+    gridTemplateColumns: showToolbox ? `${toolboxWidth}px minmax(0, 1fr)` : 'minmax(0, 1fr)',
+    gridTemplateRows: showBottomPanels ? `minmax(0, 1fr) ${bottomHeight}px` : 'minmax(0, 1fr)',
+  };
+
   return (
-    <section className={gridClass}>
+    <section
+      className={gridClass}
+      style={gridStyle}
+      onPointerMove={(e) => {
+        handleToolsResizeMove(e);
+        handleBottomResizeMove(e);
+      }}
+      onPointerUp={(e) => {
+        handleToolsResizeEnd(e);
+        handleBottomResizeEnd(e);
+      }}
+    >
       {showToolbox && (
         <Toolbar
           selectedTool={selectedTool}
@@ -88,6 +154,8 @@ export function Workspace({
           brushShape={brushShape}
           brushRadius={brushRadius}
           onBrushShapeChange={onBrushShapeChange}
+          onResizeStart={handleToolsResizeStart}
+          isResizing={isResizingTools}
         />
       )}
 
@@ -124,6 +192,10 @@ export function Workspace({
 
       {showBottomPanels && (
         <div className="bottom-row">
+          <div
+            className={`resize-handle-y ${isResizingBottom ? 'active' : ''}`}
+            onPointerDown={handleBottomResizeStart}
+          />
           <ReportPanel result={result} error={reportError} />
           <SettingsPanel settings={settings} onChange={onSettingsChange} />
           <ArtifactList result={result} />

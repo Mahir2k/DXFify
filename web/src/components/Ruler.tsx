@@ -1,8 +1,4 @@
-/**
- * Rounds a rough tick spacing to a "nice" 1 / 2 / 5 step at the appropriate
- * power of ten, the same logic real CAD/vector rulers use so labels land on
- * round numbers instead of awkward fractions.
- */
+
 export function niceStep(rough: number): number {
   if (!isFinite(rough) || rough <= 0) return 1;
   const exponent = Math.floor(Math.log10(rough));
@@ -18,11 +14,11 @@ export function niceStep(rough: number): number {
 
 interface RulerProps {
   orientation: 'horizontal' | 'vertical';
-  /** Value at the start of the visible range (left edge for horizontal, top edge for vertical), before any flip. */
+  
   min: number;
-  /** Value at the end of the visible range. */
+  
   max: number;
-  /** When true, the larger value is placed at the start (top/left) instead of the end. Used for Y-up model space. */
+  
   flip?: boolean;
 }
 

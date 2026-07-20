@@ -24,7 +24,24 @@ export type ToolId =
   | 'delete-point';
 
 export interface ConversionSettings {
-  sheetSize: 'a4' | 'a3' | 'a5' | 'letter' | 'legal';
+  sheetSize: 'a4' | 'a3' | 'a2' | 'a1' | 'a5' | 'letter' | 'legal';
+  
+  maskThreshold?: number;       
+  erosionKernel?: number;       
+  erosionIterations?: number;   
+  
+  minHoleArea?: number;         
+  minOuterArea?: number;        
+  circleRatio?: number;         
+  
+  epsilonMin?: number;          
+  epsilonMax?: number;          
+  snapAngle?: number;           
+  snapMinLength?: number;       
+  
+  markerOffsetX?: number;       
+  markerOffsetY?: number;       
+  markerClearRadius?: number;   
 }
 
 export interface GeometryEntity {

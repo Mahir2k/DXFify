@@ -1,132 +1,115 @@
-# dxfer — Photo → DXF dimensional reconstruction
+# DXFify — Photo to DXF Dimensional Reconstruction
 
-## What it does
-`dxfer` converts a single photograph of a flat object lying on a calibrated
-sheet into a metrically-scaled 2D ASCII DXF file. The output is suitable
-for direct import into laser-cutter / CAD software at true 1:1 scale.
+DXFify converts a single photograph of a flat object lying on a calibrated sheet (with ArUco markers) into a metrically-scaled 2D DXF file at true 1:1 scale, suitable for direct laser-cutting, CAD modeling, and manufacturing.
 
-## Pipeline overview
+---
 
-```
-   ┌────────┐   ┌───────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────┐
-   │ photo  │ → │ Calibration   │ → │ Segmentation │ → │ Vectorize    │ → │ DXF      │
-   │        │   │ (ArUco+H)     │   │ (multi+holes)│   │ (DP+arcs)    │   │ (mm, Y-up)│
-   └────────┘   └───────────────┘   └──────────────┘   └──────────────┘   └──────────┘
-```
+## 1. System Architecture
 
-### 1. Calibration
-- **Fiducial system**: 4 ArUco markers from `DICT_4X4_50` placed at known
-  positions on an A4 sheet (see `calibration_sheet_spec.md`).
-- **Detection**: OpenCV 4.7+ `cv::aruco::ArucoDetector`.
-- **Correspondences**: each marker's image-space centroid ↔ known world (mm)
-  position from `expectedMarkerCenters()`.
-- **Homography**: `cv::findHomography` with RANSAC; reprojection error is
-  reported. If `--intrinsics` is supplied, the image is undistorted with
-  `cv::undistort` *before* marker detection, eliminating the dominant
-  radial-distortion bias near the image border.
-- **Warp**: `cv::warpPerspective` produces a top-down image at the requested
-  `--pixels-per-mm` (default 4 → 0.25 mm/px, adequate for most laser-cut
-  tolerances of ±0.2 mm).
+The project consists of two core components:
+1. **Python Pipeline Worker (`dxferpy/`)**:
+   - Performs AI segmentation via the BiRefNet model to isolate the object boundary.
+   - Detects the 4 ArUco corners to warp perspective and establish physical pixel-to-millimeter coordinates.
+   - Fits geometric elements (polylines, straight segments, snapped orthogonal lines, and circular arcs) using custom OpenCV and algebraic solvers.
+   - Runs as a persistent Flask HTTP microservice to keep the BiRefNet model warm.
+2. **Web Dashboard (`web/`)**:
+   - Renders a multi-layer interactive canvas displaying vector shapes overlaid on original inputs.
+   - Exposes extensive conversion settings to tune the segmentation and vectorization engines.
+   - Provides an in-place CAD editor to inspect coordinates, delete geometries, snap points, mark holes, and brush-deform contours.
+   - Runs as an Express server proxying API requests to the Python microservice, built with React, Vite, and TypeScript.
 
-### 2. Segmentation
-- Background = calibration sheet → object is isolated with selectable
-  segmentation methods: gradient (default), Otsu on inverted grayscale, HSV
-  saturation, or adaptive thresholding.
-- Morphological close (default 1 mm kernel) bridges small mask gaps from
-  shadows / JPEG artifacts.
-- `cv::findContours` with `RETR_CCOMP` returns a 2-level hierarchy:
-  top-level contours are **outer boundaries**, their direct children are
-  **holes** (cutouts). Holes are written to a separate `HOLES` layer.
-- A minimum-area filter (`--min-object-mm2`, default 100) removes dust and
-  ArUco-detection noise.
+---
 
-### 3. Geometric reconstruction
-- **Simplification**: `cv::approxPolyDP` (Douglas-Peucker) with epsilon
-  `--simplify-mm` (default 0.15 mm). This is smaller than typical CAM
-  kerf (~0.1–0.2 mm) so we preserve real geometric features.
-- **Right-angle snapping** (optional): vertices whose neighbors form an
-  angle within 3° of 90° are snapped to exact 90°. Useful for sheet-metal
-  brackets; do *not* enable for organic shapes.
-- **Arc fitting** (optional, `--fit-arcs`): between each consecutive pair
-  of simplified vertices, the original contour span is fit to a circle via
-  algebraic least squares. If the max residual is below
-  `--arc-tol-mm` (default 0.10), the polyline segment is replaced by a
-  bulge value (LWPOLYLINE group code 42). Bulge = tan(θ/4), signed by
-  arc direction. The sign is computed in CAD Y-up frame, so we flip the
-  cross-product sign from image Y-down.
+## 2. Setup & Execution
 
-  **Justification**: pure-polyline output is universally compatible but
-  produces noisy approximations of true arcs (a 30 mm circle becomes 32+
-  short segments). Bulge-encoded LWPOLYLINEs are recognized as arcs by
-  AutoCAD, LibreCAD, Fusion 360, and most CAM software, yielding cleaner
-  G-code and editable geometry.
+### A. Python Backend (Pipeline Worker)
+Ensure Python 3.10+ is installed.
 
-### 4. DXF generation
-- Hand-rolled ASCII writer (no external libraries), R14 (`AC1014`)
-  compatible.
-- `HEADER` sets `$INSUNITS=4` (millimeters) so CAD software auto-scales.
-- `TABLES` defines `CONTINUOUS` linetype and `0`/`OUTER`/`HOLES` layers.
-- `ENTITIES` contains `LWPOLYLINE` records (one per contour). Closed
-  outer polylines use flag 1; closed hole polylines also use flag 1 and
-  sit on the `HOLES` layer (red, for visual distinction in CAD).
-- `EOF` terminates the file.
+1. Navigate to the backend directory:
+   ```bash
+   cd dxferpy
+   ```
+2. Set up a virtual environment and install dependencies:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. Run the persistent server:
+   ```bash
+   python3 pipeline_worker.py
+   ```
+   *The Flask microservice listens on port 8788. It preloads the `birefnet-general-lite` model.*
 
-### 5. Coordinate system
-- World origin: top-left of the calibration sheet (center of marker 0's
-  bounding box corner).
-- After vectorization, Y is flipped so the DXF is in CAD Y-up frame.
-  Origin is at (0, sheetHeightMm); the part occupies positive-XY space.
+### B. Web Dashboard
+Ensure Node.js 18+ is installed.
 
-## Accuracy characteristics
+1. Navigate to the web directory:
+   ```bash
+   cd web
+   ```
+2. Install npm packages:
+   ```bash
+   npm install
+   ```
+3. Run the development server:
+   ```bash
+   npm run dev
+   ```
+   *The Express server sits on port 3000, hosting the React interface and proxying requests to the Python worker.*
 
-### Validation procedure
-Use any ISO/IEC 7810 ID-1 card (e.g., credit card: 85.60 × 53.98 mm) as
-a known reference. Photograph it on the calibration sheet, run dxfer, and
-compare the reported `bboxWidthMm`/`bboxHeightMm` to ground truth.
+---
 
-### Expected error budget
-| Source                          | Typical contribution |
-|---------------------------------|----------------------|
-| Marker detection (pixel)        | ±0.5 px → ±0.13 mm @ 4 px/mm |
-| Homography reprojection         | < 0.5 mm             |
-| Lens distortion (uncorrected)   | up to 1–3 mm near borders |
-| Segmentation edge bias          | ±0.5 px → ±0.13 mm   |
-| JPEG compression (q=85)         | ±0.1 mm              |
-| **Total (with intrinsics)**     | **~0.3 mm RMS**      |
-| **Total (no intrinsics, centered)** | **~0.5–1 mm RMS** |
+## 3. Calibration Sheet Specification
 
-### Mitigations
-- Supply `--intrinsics` for phone cameras.
-- Crop tightly around the sheet before running dxfer to maximize pixel
-  density at the markers.
-- Use matte, glare-free lighting at 45° to the sheet (two light sources,
-  opposite sides) to kill shadow edges.
-- Increase `--pixels-per-mm` to 6–8 if your camera resolution allows.
+To obtain true 1:1 scale, the object must be photographed on a flat sheet with **4 ArUco markers** at the corners.
 
-## Limitations
-- **Planar assumption**: only the top-down silhouette is reconstructed;
-  3-D thickness and parts not lying flat are not represented.
-- **Single dominant object**: although multi-object detection works at the
-  segmentation level, the validation report currently reports stats for the
-  largest contour only.
-- **Color similarity**: a low-contrast object on a similar calibration sheet
-  may fail one segmentation method; compare `--seg-method gradient`, `otsu`,
-  `sat`, and `adaptive` with `--debug`.
-- **Arc fit false positives**: tiny irregular wiggles can sometimes fit a
-  large-radius arc. If you see implausibly large arcs in CAD, raise
-  `--arc-tol-mm` to 0.2 mm or disable `--fit-arcs`.
+### Coordinates & Placement
+- **Dictionary**: `DICT_4X4_50` (IDs: 0, 1, 2, 3)
+- **Arrangement**:
+  - **ID 0**: Top-left corner
+  - **ID 1**: Top-right corner
+  - **ID 2**: Bottom-right corner
+  - **ID 3**: Bottom-left corner
+- **Layout Margins**:
+  - The expected marker offsets from the sheet corners default to `32.2mm` X and `34.2mm` Y.
+  - The expected clearing radius around the center of each marker is `22.0mm`.
+  - These values can be fully customized in the **ArUco Calibration** section under Conversion Settings.
 
-## Build & run
-```bash
-mkdir build && cd build
-cmake .. && make -j
+---
 
-./dxfer -i ../test/part.jpg -o ../test/part.dxf \
-        --marker-size-mm 40 --sheet-width-mm 210 --sheet-height-mm 297 \
-        --marker-inset-mm 20 \
-        --fit-arcs --snap-right-angles \
-        --report ../test/part.report.json \
-        --debug  ../test/part.dbg.png
-```
+## 4. Conversion Settings
 
-Requires OpenCV 4.7+ built with the `opencv_contrib` `aruco` module.
+Users can customize parameters in the settings panel to optimize extraction quality:
+
+- **Sheet Size**:
+  - Select between A1, A2, A3, A4, A5, Letter, and Legal templates.
+- **Segmentation**:
+  - **Mask threshold** (Default: 240, Range: 1–255): Probability threshold for binarizing the AI segmentation mask.
+  - **Erosion kernel** (Default: 3, Range: 1–9, odd): Morphological kernel size to clean up mask outlines.
+  - **Erosion iterations** (Default: 1, Range: 0–5): Number of erosion passes.
+- **Contour Filtering**:
+  - **Min hole area** (Default: 500 px²): Contours classified as holes smaller than this threshold are filtered out.
+  - **Min outer area** (Default: 100 px²): Main contours smaller than this threshold are ignored.
+  - **Circle detection ratio** (Default: 0.85, Range: 0.5–1.0): Contours with area-to-enclosing-circle ratios above this value are fit as circles.
+- **Vectorization**:
+  - **Epsilon min / max** (Default: 0.5 / 2.5): Controls Douglas-Peucker simplification tolerance based on contour perimeter.
+  - **Snap angle** (Default: 10°): Maximum angular difference allowed to snap lines to dominant orthogonal axes.
+  - **Snap min length** (Default: 20 px): Minimum segment length eligible for orthogonal snapping.
+
+---
+
+## 5. CAD Toolbar & Canvas Editing
+
+The interface includes a powerful vertex and geometry editor:
+
+1. **Pan / Inspect (↖)**: Navigate the viewport. Click on lines to inspect vertex coordinates. Drag vertex handles (blue) to refine outlines. Drag circle centers (blue) or radial handles (yellow) to translate or resize circles.
+2. **Deformation Brush (🖌)**: Bend and shape geometries like a physical ball/cube falling on fabric. Vertices falling within the brush's boundary are pushed outward to its perimeter, letting you shape curves effortlessly. Toggles for Circle (●) and Square (■) brushes are available. Hold **Shift + scroll wheel** to change the brush size.
+3. **Snap Toggle (⌖)**: Vertices and circle centers automatically snap to neighboring coordinates within a `6mm` distance for perfect alignments.
+4. **Mark Hole (○)**: Select any closed polyline and re-classify it as a hole to assign it to the `HOLES` layer (rendered in red in CAD, indicating a cut profile).
+5. **Delete Element (⌫)**: Click on any circle or polyline to delete the entire shape.
+6. **Delete Point (−)**: Click on any vertex of a polyline to delete it while keeping the outline connected.
+7. **Add Point (+)**: Click anywhere on a polyline's segment to insert a new vertex.
+8. **Undo/Redo (↶ / ↷)**: History is saved at the end of each drag, click, or edit stroke so you can undo/redo entire operations at once (`Ctrl+Z` / `Ctrl+Y`).
+9. **Grid Toggle**: Overlay a metric CAD grid on the previews.
+10. **In-place Splitters**: Hover and drag the thin orange lines at the boundaries of the Left Toolbar or the Bottom Panel row to resize them vertically or horizontally.

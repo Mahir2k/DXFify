@@ -28,12 +28,14 @@ def smooth_curve(pts, window_size=7, iterations=3, closed=False):
 PAPER_SIZES = {
     'a4': (210.0, 297.0),
     'a3': (297.0, 420.0),
+    'a2': (420.0, 594.0),
+    'a1': (594.0, 841.0),
     'a5': (148.0, 210.0),
     'letter': (215.9, 279.4),
     'legal': (215.9, 355.6)
 }
 
-def get_homography(orig_path, paper_w=210.0, paper_h=297.0):
+def get_homography(orig_path, paper_w=210.0, paper_h=297.0, *, marker_offset_x=32.2, marker_offset_y=34.2):
     img = cv2.imread(orig_path)
     if img is None: return None, 1.0
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -59,7 +61,7 @@ def get_homography(orig_path, paper_w=210.0, paper_h=297.0):
             ], dtype=np.float32)
             
             scale = 10.0
-            cx, cy = 32.2, 34.2
+            cx, cy = marker_offset_x, marker_offset_y
             pts_dst = np.array([
                 [cx * scale, cy * scale],
                 [(paper_w - cx) * scale, cy * scale],
@@ -84,10 +86,10 @@ def project_point(pt, x0, y0, vx, vy):
     t = dx * vx + dy * vy
     return (x0 + t * vx, y0 + t * vy)
 
-def vectorize_contour(contour, height, scale):
+def vectorize_contour(contour, height, scale, *, epsilon_min=0.5, epsilon_max=2.5, snap_angle=10.0, snap_min_length=20.0):
     n = len(contour)
     perimeter = cv2.arcLength(contour, True)
-    epsilon = min(2.5, max(0.5, 0.0008 * perimeter))
+    epsilon = min(epsilon_max, max(epsilon_min, 0.0008 * perimeter))
     approx = cv2.approxPolyDP(contour, epsilon, True)
     
     num_v = len(approx)
@@ -196,20 +198,20 @@ def vectorize_contour(contour, height, scale):
                 best_diff = diff
                 best_i = di
 
-        if best_diff < 10.0 and seg_lengths[j] >= 20.0:
+        if best_diff < snap_angle and seg_lengths[j] >= snap_min_length:
             snapped_dir_idx.append(best_i)
         else:
             snapped_dir_idx.append(-1)
 
-    # Bridge short interruptions in snapped_dir_idx
+    
     changed = True
     while changed:
         changed = False
         for j in range(num_v):
-            # Only bridge if the segment is actually short (less than 10px / 1mm) and currently unsnapped
+            
             if snapped_dir_idx[j] == -1 and seg_lengths[j] < 10.0:
                 prev_dir = -1
-                # Only check up to 2 steps away
+                
                 for step in range(1, 3):
                     p = (j - step) % num_v
                     if snapped_dir_idx[p] != -1 and seg_lengths[p] >= 5.0:

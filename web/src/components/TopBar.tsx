@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ConversionSettings, PreviewTab, StatusMessage, ToolId } from '../types';
 
-/* ------------------------------------------------------------------ */
-/* Types                                                               */
-/* ------------------------------------------------------------------ */
+
+
+
 
 interface MenuItemDef {
   label: string;
@@ -41,9 +41,9 @@ export interface TopBarProps {
   onDownload?: () => void;
 }
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
+
+
+
 
 const menuOrder = ['File', 'Edit', 'View', 'Image', 'Select', 'Tools', 'Filters', 'Windows', 'Help'];
 
@@ -58,9 +58,9 @@ function downloadUrl(url: string, filename: string) {
   document.body.removeChild(a);
 }
 
-/* ------------------------------------------------------------------ */
-/* Component                                                           */
-/* ------------------------------------------------------------------ */
+
+
+
 
 export function TopBar(props: TopBarProps) {
   const {
@@ -81,7 +81,7 @@ export function TopBar(props: TopBarProps) {
   const menuBarRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  /* ---- Close menu on click-outside or Escape ---- */
+  
   useEffect(() => {
     if (!openMenu) return;
     const onDown = (e: MouseEvent) => {
@@ -101,7 +101,7 @@ export function TopBar(props: TopBarProps) {
     };
   }, [openMenu]);
 
-  /* ---- Keyboard shortcuts ---- */
+  
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const el = document.activeElement;
@@ -151,7 +151,7 @@ export function TopBar(props: TopBarProps) {
     return () => document.removeEventListener('keydown', handler);
   }, [canRun, canDownload, isConverting, dxfUrl, dialog, onRun, onToolChange, onZoomIn, onZoomOut, onFitToView, onToggleGrid, onPreviewTabChange, onDownload]);
 
-  /* ---- Menu interaction helpers ---- */
+  
   const click = (name: string) => {
     if (openMenu === name) { setOpenMenu(null); setMenuActive(false); }
     else { setOpenMenu(name); setMenuActive(true); }
@@ -171,7 +171,7 @@ export function TopBar(props: TopBarProps) {
 
   const statusClass = status.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-  /* ---- Build menus ---- */
+  
   const menus: Record<string, MenuItemDef[]> = {
     File: [
       { label: 'Upload Image…', action: () => fileInputRef.current?.click(), shortcut: 'Ctrl+O' },
@@ -244,7 +244,7 @@ export function TopBar(props: TopBarProps) {
     ],
   };
 
-  /* ---- Render ---- */
+  
   return (
     <>
       <header className="top-bar">
@@ -286,7 +286,7 @@ export function TopBar(props: TopBarProps) {
         </div>
       </header>
 
-      {/* Hidden file input */}
+      {}
       <input
         ref={fileInputRef}
         type="file"
@@ -299,7 +299,7 @@ export function TopBar(props: TopBarProps) {
         }}
       />
 
-      {/* ---- Dialogs ---- */}
+      {}
       {dialog && (
         <div className="dialog-overlay" onClick={() => setDialog(null)}>
           <div className="dialog-box" onClick={(e) => e.stopPropagation()}>

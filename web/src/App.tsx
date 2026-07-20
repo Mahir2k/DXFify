@@ -52,7 +52,7 @@ function getDefaultViewport(
 
 function generateDxfString(entities: GeometryEntity[]): string {
   let out = '';
-  // minimal DXF header with Insunits set to 4 (millimeters)
+  
   out += '0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n';
   out += '0\nSECTION\n2\nTABLES\n0\nLTYPE\n72\n65\n70\n64\n3\nContinuous\n73\n0\n40\n0.0\n0\nENDSEC\n';
   out += '0\nSECTION\n2\nENTITIES\n';
@@ -91,19 +91,19 @@ export default function App() {
   const [report, setReport] = useState<ConversionReport | null>(null);
   const [error, setError] = useState<ConversionErrorDetails | null>(null);
 
-  /* ---- Lifted UI state for menus and viewport synchronization ---- */
+  
   const [gridEnabled, setGridEnabled] = useState(true);
   const [showToolbox, setShowToolbox] = useState(true);
   const [showBottomPanels, setShowBottomPanels] = useState(true);
   const [imgNaturalSize, setImgNaturalSize] = useState<{ width: number; height: number } | null>(null);
   const [viewport, setViewport] = useState<Viewport | null>(null);
 
-  /* ---- Geometry Editing and History States ---- */
+  
   const [entities, setEntities] = useState<GeometryEntity[]>([]);
   const [history, setHistory] = useState<GeometryEntity[][]>([]);
   const [redoStack, setRedoStack] = useState<GeometryEntity[][]>([]);
 
-  /* ---- Brush states ---- */
+  
   const [brushShape, setBrushShape] = useState<'circle' | 'square'>('circle');
   const [brushRadius, setBrushRadius] = useState<number>(15);
 
@@ -214,12 +214,12 @@ export default function App() {
     setViewport(getDefaultViewport(conversionResult, imgNaturalSize));
   };
 
-  /* ---- Edit Handlers ---- */
+  
   const updateEntities = (newEntities: GeometryEntity[], commitToHistory: boolean = true) => {
     setEntities(newEntities);
     if (commitToHistory) {
       setHistory((prev) => {
-        // Prevent duplicate commits of the same state
+        
         if (prev.length > 0 && prev[prev.length - 1] === newEntities) {
           return prev;
         }

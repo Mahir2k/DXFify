@@ -6,6 +6,8 @@ interface ToolbarProps {
   brushShape?: 'circle' | 'square';
   brushRadius?: number;
   onBrushShapeChange?: (shape: 'circle' | 'square') => void;
+  onResizeStart?: React.PointerEventHandler;
+  isResizing?: boolean;
 }
 
 const toolMeta: Record<ToolId, { label: string; glyph: string }> = {
@@ -24,7 +26,7 @@ const toolMeta: Record<ToolId, { label: string; glyph: string }> = {
   redo: { label: 'Redo', glyph: '↷' },
 };
 
-// Grouped the way a real toolbox groups by function, with a hairline between groups.
+
 const toolGroups: ToolId[][] = [
   ['select', 'snap', 'measure', 'brush'],
   ['line', 'arc', 'polyline', 'add-point'],
@@ -38,6 +40,8 @@ export function Toolbar({
   brushShape = 'circle',
   brushRadius = 15,
   onBrushShapeChange,
+  onResizeStart,
+  isResizing = false,
 }: ToolbarProps) {
   const selectedLabel = toolMeta[selectedTool]?.label ?? selectedTool;
 
@@ -101,6 +105,13 @@ export function Toolbar({
           </div>
         )}
       </div>
+
+      {onResizeStart && (
+        <div
+          className={`resize-handle-x ${isResizing ? 'active' : ''}`}
+          onPointerDown={onResizeStart}
+        />
+      )}
     </aside>
   );
 }

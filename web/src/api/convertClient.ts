@@ -27,7 +27,12 @@ export async function runConversion(
 ): Promise<ConversionResult> {
   const body = new FormData();
   body.append('image', image);
-  body.append('sheetSize', settings.sheetSize);
+  
+  for (const [key, value] of Object.entries(settings)) {
+    if (value !== undefined && value !== null) {
+      body.append(key, String(value));
+    }
+  }
 
   let response: Response;
   try {

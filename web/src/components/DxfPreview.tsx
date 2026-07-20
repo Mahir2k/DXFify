@@ -2,9 +2,9 @@ import { useState, useRef, useEffect } from 'react';
 import type { ConversionResult, ToolId, Viewport, GeometryEntity } from '../types';
 import { Ruler } from './Ruler';
 
-/* ------------------------------------------------------------------ */
-/* Props                                                               */
-/* ------------------------------------------------------------------ */
+
+
+
 
 interface DxfPreviewProps {
   result: ConversionResult | null;
@@ -23,9 +23,9 @@ interface DxfPreviewProps {
   onBrushRadiusChange?: (radius: number) => void;
 }
 
-/* ------------------------------------------------------------------ */
-/* Component                                                           */
-/* ------------------------------------------------------------------ */
+
+
+
 
 export function DxfPreview({
   result,
@@ -50,18 +50,18 @@ export function DxfPreview({
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
   const [cursorMm, setCursorMm] = useState<{ x: number; y: number } | null>(null);
   
-  /* ---- Measure tool state ---- */
+  
   const [measureStart, setMeasureStart] = useState<{ x: number; y: number } | null>(null);
   const [measureEnd, setMeasureEnd] = useState<{ x: number; y: number } | null>(null);
 
-  /* ---- Interactive drawing states ---- */
+  
   const [drawPoints, setDrawPoints] = useState<[number, number][]>([]);
   const [arcStart, setArcStart] = useState<{ x: number; y: number } | null>(null);
   const [arcEnd, setArcEnd] = useState<{ x: number; y: number } | null>(null);
-  const [arcStep, setArcStep] = useState<number>(0); // 0: idle, 1: start set, 2: end set
+  const [arcStep, setArcStep] = useState<number>(0); 
   const [snapPoint, setSnapPoint] = useState<{ x: number; y: number } | null>(null);
 
-  /* ---- Dragging node / handles state ---- */
+  
   const [activeDrag, setActiveDrag] = useState<{
     type: 'vertex' | 'center' | 'radius';
     entityIdx: number;
@@ -71,7 +71,7 @@ export function DxfPreview({
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
-    // Reset temporary states when changing tools
+    
     setMeasureStart(null);
     setMeasureEnd(null);
     setDrawPoints([]);
@@ -82,7 +82,7 @@ export function DxfPreview({
     setActiveDrag(null);
   }, [selectedTool]);
 
-  // Escape key listener to abort drawing
+  
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -98,7 +98,7 @@ export function DxfPreview({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  /* ---- ViewBox maths ---- */
+  
   const baseMinX = (result?.report?.bboxMinXMm || 0) - 10;
   const baseMinY = result?.report?.bboxMaxYMm ? -(result.report.bboxMaxYMm + 10) : 0;
   const baseWidth = (result?.report?.bboxWidthMm || 100) + 20;
@@ -145,7 +145,7 @@ export function DxfPreview({
     return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
   };
 
-  // Pushes coordinates that fall inside the brush radially outwards to conform to the brush edge (cloth-on-ball effect)
+  
   const applyBrushDeform = (cx: number, cy: number, currentEntities: GeometryEntity[]) => {
     return currentEntities.map((entity) => {
       if (entity.type === 'polyline' && entity.points) {
@@ -207,12 +207,12 @@ export function DxfPreview({
     });
   };
 
-  // Find nearest vertex or center of existing entities (snapping helper)
+  
   const getSnappedCoords = (clientX: number, clientY: number): { x: number; y: number } | null => {
     const coords = getModelCoords(clientX, clientY);
     if (!coords) return null;
 
-    const snapRadius = 6.0; // mm radius
+    const snapRadius = 6.0; 
     let bestPt = coords;
     let minD = snapRadius;
 
@@ -268,7 +268,7 @@ export function DxfPreview({
   const handleAddPointClick = (pt: { x: number; y: number }) => {
     let bestEntityIdx = -1;
     let bestSegmentIdx = -1;
-    let minD = 6.0; // mm radius
+    let minD = 6.0; 
     let splitPoint: [number, number] = [0, 0];
 
     for (let idx = 0; idx < entities.length; idx++) {
@@ -330,7 +330,7 @@ export function DxfPreview({
     setCursorMm(coords);
   };
 
-  /* ---- Node drag and drop handlers ---- */
+  
   const handleVertexPointerDown = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number, pointIdx: number) => {
     e.stopPropagation();
     if (selectedTool === 'delete-point') {
@@ -465,7 +465,7 @@ export function DxfPreview({
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     updateCursorFromEvent(e);
 
-    // If dragging a node control handle, update geometry and override panning
+    
     if (activeDrag) {
       const rawCoords = getModelCoords(e.clientX, e.clientY);
       if (!rawCoords) return;
@@ -476,7 +476,7 @@ export function DxfPreview({
         const targetEnt = entities[activeDrag.entityIdx];
         const selfPt = targetEnt.points?.[activeDrag.pointIdx!];
         if (selfPt && Math.hypot(selfPt[0] - snapped.x, selfPt[1] - snapped.y) < 1.0) {
-          // Ignore self snap
+          
         } else {
           coords = snapped;
         }
@@ -614,13 +614,13 @@ export function DxfPreview({
     }
   };
 
-  // Vertical ruler range expressed in model space (Y-up), largest value at the top.
+  
   const vRulerMin = -(viewY + viewHeight);
   const vRulerMax = -viewY;
 
   const currentZoomPercentage = Math.round((baseWidth / viewWidth) * 100);
 
-  // Measure math details
+  
   const distance = measureStart && measureEnd ? Math.hypot(measureEnd.x - measureStart.x, measureEnd.y - measureStart.y) : 0;
   const midX = measureStart && measureEnd ? (measureStart.x + measureEnd.x) / 2 : 0;
   const midY = measureStart && measureEnd ? (measureStart.y + measureEnd.y) / 2 : 0;
@@ -696,7 +696,7 @@ export function DxfPreview({
                 onDoubleClick={handleDoubleClick}
                 onWheel={handleWheel}
               >
-                {/* Bounding box dimensions overlay */}
+                {}
                 {outerLayerEnabled && result?.report?.bboxWidthMm != null && result?.report?.bboxHeightMm != null && (
                   <g className="dimension-overlay" style={{ opacity: 0.6 }}>
                     <path d={`M ${result.report.bboxMinXMm || 0} ${-(result.report.bboxMaxYMm || 0) - 5} L ${(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm} ${-(result.report.bboxMaxYMm || 0) - 5}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
@@ -729,7 +729,7 @@ export function DxfPreview({
                     return null;
                   })}
 
-                  {/* Interactive node editing handles */}
+                  {}
                   {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
                     const isHole = entity.layer === 'HOLES';
                     if (isHole && !holeLayerEnabled) return null;
@@ -738,11 +738,11 @@ export function DxfPreview({
                     const handleScale = Math.max(0.2, viewWidth / 250);
 
                     if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
-                      // Circle handles are not relevant for delete-point mode
+                      
                       if (selectedTool === 'delete-point') return null;
                       return (
                         <g key={entityIdx}>
-                          {/* Center handle */}
+                          {}
                           <circle
                             cx={entity.cx}
                             cy={entity.cy}
@@ -754,7 +754,7 @@ export function DxfPreview({
                             onPointerDown={(e) => handleCircleCenterDragStart(e, entityIdx)}
                             onPointerUp={handleHandlePointerUp}
                           />
-                          {/* Radius handle (perimeter) */}
+                          {}
                           <circle
                             cx={entity.cx + entity.r}
                             cy={entity.cy}
@@ -777,7 +777,7 @@ export function DxfPreview({
                               cx={pt[0]}
                               cy={pt[1]}
                               r={1.2 * handleScale}
-                              fill={selectedTool === 'delete-point' ? '#ff3b30' : 'var(--accent)'} // red color for delete points!
+                              fill={selectedTool === 'delete-point' ? '#ff3b30' : 'var(--accent)'} 
                               stroke="white"
                               strokeWidth={0.3 * handleScale}
                               style={{ cursor: selectedTool === 'delete-point' ? 'pointer' : 'move' }}
@@ -791,7 +791,7 @@ export function DxfPreview({
                     return null;
                   })}
 
-                  {/* Draw helper snaps */}
+                  {}
                   {snapPoint && (
                     <rect
                       x={snapPoint.x - 1.2}
@@ -804,7 +804,7 @@ export function DxfPreview({
                     />
                   )}
 
-                  {/* Proportional Brush zone representation (Ball/Cube shape) */}
+                  {}
                   {selectedTool === 'brush' && cursorMm && (
                     <g style={{ opacity: 0.85 }}>
                       {brushShape === 'circle' ? (
@@ -828,7 +828,7 @@ export function DxfPreview({
                     </g>
                   )}
 
-                  {/* Draw helper templates in progress */}
+                  {}
                   {drawPoints.length > 0 && (
                     <polyline
                       points={drawPoints.map(p => `${p[0]},${p[1]}`).join(' ')}
@@ -880,7 +880,7 @@ export function DxfPreview({
                     />
                   )}
 
-                  {/* Distance measure overlay */}
+                  {}
                   {measureStart && measureEnd && (
                     <g className="measure-overlay">
                       <line

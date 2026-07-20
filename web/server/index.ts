@@ -110,11 +110,16 @@ async function writeMockJob(jobFolder: string) {
   return report;
 }
 
-// ---------------------------------------------------------------------------
-// Python worker communication
-// ---------------------------------------------------------------------------
 
-async function callPipelineWorker(inputPath: string, outputDir: string, paperSize: string) {
+
+
+
+async function callPipelineWorker(
+  inputPath: string,
+  outputDir: string,
+  paperSize: string,
+  processingParams: Record<string, number> = {},
+) {
   const url = `${workerUrl}/process`;
   console.log(`[dxferpy] POST ${url} inputPath=${inputPath} paperSize=${paperSize}`);
 
@@ -125,6 +130,7 @@ async function callPipelineWorker(inputPath: string, outputDir: string, paperSiz
       inputPath,
       outputDir,
       paperSize,
+      ...processingParams,
     }),
   });
 
@@ -148,9 +154,9 @@ async function checkWorkerHealth() {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Routes
-// ---------------------------------------------------------------------------
+
+
+
 
 app.post('/api/convert', upload.single('image'), async (req, res) => {
   if (!req.file) {
@@ -177,7 +183,23 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
     } else {
       const paperSize = asString(req.body.sheetSize, 'a4');
 
-      // Check worker is alive
+      
+      const paramKeys = [
+        'maskThreshold', 'erosionKernel', 'erosionIterations',
+        'minHoleArea', 'minOuterArea', 'circleRatio',
+        'epsilonMin', 'epsilonMax', 'snapAngle', 'snapMinLength',
+        'markerOffsetX', 'markerOffsetY', 'markerClearRadius',
+      ] as const;
+      const processingParams: Record<string, number> = {};
+      for (const key of paramKeys) {
+        const raw = req.body[key];
+        if (raw !== undefined && raw !== null && raw !== '') {
+          const num = Number(raw);
+          if (!isNaN(num)) processingParams[key] = num;
+        }
+      }
+
+      
       const healthy = await checkWorkerHealth();
       if (!healthy) {
         return res.status(503).json({
@@ -186,7 +208,7 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
         });
       }
 
-      report = await callPipelineWorker(inputPath, jobFolder, paperSize);
+      report = await callPipelineWorker(inputPath, jobFolder, paperSize, processingParams);
     }
 
     const files = await collectJobFiles(jobId);
@@ -248,7 +270,7 @@ app.get('/api/health', async (_req, res) => {
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, () => {
   console.log(`DXFify API listening on http://localhost:${port}`);
-  // Check worker on startup
+  
   checkWorkerHealth().then((ok) => {
     if (ok) {
       console.log(`[dxferpy] Python worker at ${workerUrl} is ready`);
