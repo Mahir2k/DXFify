@@ -45,6 +45,7 @@ export function DxfPreview({
 }: DxfPreviewProps) {
   const [outerLayerEnabled, setOuterLayerEnabled] = useState(true);
   const [holeLayerEnabled, setHoleLayerEnabled] = useState(true);
+  const [detailsLayerEnabled, setDetailsLayerEnabled] = useState(true);
 
   const [isDragging, setIsDragging] = useState(false);
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
@@ -658,6 +659,13 @@ export function DxfPreview({
             onChange={(event) => setHoleLayerEnabled(event.target.checked)}
           /> HOLES
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={detailsLayerEnabled}
+            onChange={(event) => setDetailsLayerEnabled(event.target.checked)}
+          /> DETAILS
+        </label>
       </div>
 
       <div className="canvas-area">
@@ -712,10 +720,11 @@ export function DxfPreview({
 
                 <g transform="scale(1, -1)">
                   {entities.map((entity, idx) => {
-                    const isHole = entity.layer === 'HOLES';
-                    if (isHole && !holeLayerEnabled) return null;
-                    if (!isHole && !outerLayerEnabled) return null;
-                    const className = isHole ? 'hole-line' : 'outer-line';
+                    const layer = entity.layer;
+                    if (layer === 'HOLES' && !holeLayerEnabled) return null;
+                    if (layer === 'OUTER' && !outerLayerEnabled) return null;
+                    if (layer === 'DETAILS' && !detailsLayerEnabled) return null;
+                    const className = layer === 'HOLES' ? 'hole-line' : layer === 'DETAILS' ? 'detail-line' : 'outer-line';
                     if (entity.type === 'circle') {
                       return (
                         <circle key={idx} className={className} cx={entity.cx} cy={entity.cy} r={entity.r} fill="none" strokeWidth="0.5" />
@@ -731,9 +740,10 @@ export function DxfPreview({
 
                   {}
                   {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
-                    const isHole = entity.layer === 'HOLES';
-                    if (isHole && !holeLayerEnabled) return null;
-                    if (!isHole && !outerLayerEnabled) return null;
+                    const layer = entity.layer;
+                    if (layer === 'HOLES' && !holeLayerEnabled) return null;
+                    if (layer === 'OUTER' && !outerLayerEnabled) return null;
+                    if (layer === 'DETAILS' && !detailsLayerEnabled) return null;
 
                     const handleScale = Math.max(0.2, viewWidth / 250);
 

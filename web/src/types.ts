@@ -42,11 +42,15 @@ export interface ConversionSettings {
   markerOffsetX?: number;       
   markerOffsetY?: number;       
   markerClearRadius?: number;   
+  // Detail extraction
+  detectDetails?: boolean;      // default false
+  detailsThreshold1?: number;   // default 50
+  detailsThreshold2?: number;   // default 150
 }
 
 export interface GeometryEntity {
   type: 'circle' | 'polyline';
-  layer: 'OUTER' | 'HOLES';
+  layer: 'OUTER' | 'HOLES' | 'DETAILS';
   cx?: number;
   cy?: number;
   r?: number;

@@ -425,6 +425,76 @@ def process_image(img_path, paper_w=210.0, paper_h=297.0):
     doc.saveas(out_path)
     print(f"  Saved {out_path}")
 
+def extract_details(
+    warped_img,
+    warped_mask,
+    scale,
+    *,
+    threshold1=50,
+    threshold2=150,
+    min_len_mm=2.0,
+):
+    gray = cv2.cvtColor(warped_img, cv2.COLOR_BGR2GRAY)
+
+    kernel_size = max(3, int(2.5 * scale))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+    detail_zone = cv2.erode(warped_mask, kernel, iterations=1)
+
+    contours, hierarchy = cv2.findContours(
+        warped_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE
+    )
+    if hierarchy is not None:
+        for i, contour in enumerate(contours):
+            if hierarchy[0][i][3] != -1:
+                hole_mask = np.zeros_like(warped_mask)
+                cv2.drawContours(hole_mask, [contour], -1, 255, -1)
+                dilated_hole = cv2.dilate(hole_mask, kernel, iterations=1)
+                detail_zone = cv2.bitwise_and(
+                    detail_zone, cv2.bitwise_not(dilated_hole)
+                )
+
+    smoothed = cv2.bilateralFilter(gray, 7, 50, 50)
+
+    edges = cv2.Canny(smoothed, threshold1, threshold2)
+
+    edges = cv2.bitwise_and(edges, detail_zone)
+
+    detail_contours, _ = cv2.findContours(
+        edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE
+    )
+
+    entities = []
+    min_len_px = min_len_mm * scale
+
+    for contour in detail_contours:
+        perimeter = cv2.arcLength(contour, False)
+        if perimeter < min_len_px:
+            continue
+
+        epsilon = 0.0005 * perimeter + 0.2
+        approx = cv2.approxPolyDP(contour, epsilon, False)
+
+        if len(approx) < 2:
+            continue
+
+        points = []
+        for p in approx:
+            px = float(p[0][0]) / scale
+            py = float(warped_img.shape[0] - p[0][1]) / scale
+            points.append([round(px, 4), round(py, 4)])
+
+        entities.append(
+            {
+                "type": "polyline",
+                "layer": "DETAILS",
+                "points": points,
+                "closed": False,
+            }
+        )
+
+    return entities
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Vectorize images to DXF.")
     parser.add_argument("--paper", type=str, default="a4", help="Paper size (a4, a3, a5, letter, legal)")

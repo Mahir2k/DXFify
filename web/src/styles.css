@@ -773,6 +773,7 @@ button.ruler-corner:hover {
 
 .outer-line,
 .hole-line,
+.detail-line,
 .axis-line {
   fill: none;
   stroke: var(--accent);
@@ -786,6 +787,10 @@ button.ruler-corner:hover {
 
 .hole-line {
   stroke: var(--select);
+}
+
+.detail-line {
+  stroke: #10b981;
 }
 
 .axis-line {

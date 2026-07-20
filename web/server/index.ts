@@ -189,14 +189,18 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
         'minHoleArea', 'minOuterArea', 'circleRatio',
         'epsilonMin', 'epsilonMax', 'snapAngle', 'snapMinLength',
         'markerOffsetX', 'markerOffsetY', 'markerClearRadius',
+        'detailsThreshold1', 'detailsThreshold2',
       ] as const;
-      const processingParams: Record<string, number> = {};
+      const processingParams: Record<string, any> = {};
       for (const key of paramKeys) {
         const raw = req.body[key];
         if (raw !== undefined && raw !== null && raw !== '') {
           const num = Number(raw);
           if (!isNaN(num)) processingParams[key] = num;
         }
+      }
+      if (req.body.detectDetails !== undefined && req.body.detectDetails !== null && req.body.detectDetails !== '') {
+        processingParams.detectDetails = req.body.detectDetails === 'true' || req.body.detectDetails === '1' || req.body.detectDetails === true;
       }
 
       

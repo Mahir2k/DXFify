@@ -16,7 +16,7 @@ import numpy as np
 from rembg import new_session, remove
 from render_dxf import render_dxf_to_png
 from segment_object import get_aruco_corners, order_points_by_id
-from vectorize_smart import PAPER_SIZES, get_homography, smooth_curve, vectorize_contour
+from vectorize_smart import PAPER_SIZES, get_homography, smooth_curve, vectorize_contour, extract_details
 
 app = Flask(__name__)
 
@@ -67,12 +67,24 @@ def vectorize_single_image(
     epsilon_max: float = 2.5,
     snap_angle: float = 10.0,
     snap_min_length: float = 20.0,
+    warped_img=None,
+    detect_details: bool = False,
+    details_threshold1: int = 50,
+    details_threshold2: int = 150,
 ) -> dict:
     height = mask.shape[0]
 
     contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
 
     doc = ezdxf.new("R2010")
+    
+    if "OUTER" not in doc.layers:
+        doc.layers.new("OUTER", dxfattribs={"color": 7})
+    if "HOLES" not in doc.layers:
+        doc.layers.new("HOLES", dxfattribs={"color": 1})
+    if "DETAILS" not in doc.layers:
+        doc.layers.new("DETAILS", dxfattribs={"color": 3})
+        
     msp = doc.modelspace()
 
     entity_count = 0
@@ -106,7 +118,7 @@ def vectorize_single_image(
                     cx_mm = float(cx) / scale
                     cy_mm = float(height - cy) / scale
                     radius_mm = float(radius) / scale
-                    msp.add_circle((cx_mm, cy_mm), radius_mm)
+                    msp.add_circle((cx_mm, cy_mm), radius_mm, dxfattribs={"layer": layer})
 
                     entities.append(
                         {
@@ -141,7 +153,7 @@ def vectorize_single_image(
                 snap_min_length=snap_min_length,
             )
             if points:
-                msp.add_lwpolyline(points, close=True)
+                msp.add_lwpolyline(points, close=True, dxfattribs={"layer": layer})
 
                 entities.append(
                     {
@@ -168,6 +180,24 @@ def vectorize_single_image(
                     p1 = points[j]
                     p2 = points[(j + 1) % len(points)]
                     total_perimeter += np.hypot(p2[0] - p1[0], p2[1] - p1[1])
+
+    if detect_details and warped_img is not None:
+        details_ents = extract_details(
+            warped_img,
+            mask,
+            scale,
+            threshold1=details_threshold1,
+            threshold2=details_threshold2,
+        )
+        for dent in details_ents:
+            msp.add_lwpolyline(dent["points"], close=False, dxfattribs={"layer": "DETAILS"})
+            entities.append(dent)
+            entity_count += 1
+            for px, py in dent["points"]:
+                bbox_min_x = min(bbox_min_x, px)
+                bbox_min_y = min(bbox_min_y, py)
+                bbox_max_x = max(bbox_max_x, px)
+                bbox_max_y = max(bbox_max_y, py)
 
     doc.saveas(output_dxf)
 
@@ -208,6 +238,9 @@ def run_pipeline(
     marker_offset_x: float = 32.2,
     marker_offset_y: float = 34.2,
     marker_clear_radius: float = 22.0,
+    detect_details: bool = False,
+    details_threshold1: int = 50,
+    details_threshold2: int = 150,
 ) -> dict:
     paper_w, paper_h = PAPER_SIZES.get(paper_size.lower(), PAPER_SIZES["a4"])
 
@@ -286,6 +319,10 @@ def run_pipeline(
         epsilon_max=epsilon_max,
         snap_angle=snap_angle,
         snap_min_length=snap_min_length,
+        warped_img=warped_img,
+        detect_details=detect_details,
+        details_threshold1=details_threshold1,
+        details_threshold2=details_threshold2,
     )
 
     with open(result_json, "w") as f:
@@ -325,6 +362,9 @@ def process():
         "markerOffsetX": ("marker_offset_x", float, 32.2),
         "markerOffsetY": ("marker_offset_y", float, 34.2),
         "markerClearRadius": ("marker_clear_radius", float, 22.0),
+        "detectDetails": ("detect_details", lambda v: str(v).lower() in ("true", "1", "yes"), False),
+        "detailsThreshold1": ("details_threshold1", int, 50),
+        "detailsThreshold2": ("details_threshold2", int, 150),
     }
     for json_key, (py_key, cast, default) in param_defs.items():
         val = data.get(json_key)

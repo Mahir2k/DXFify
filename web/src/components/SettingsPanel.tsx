@@ -40,6 +40,11 @@ const ARUCO_PARAMS: ParamDef[] = [
   { key: 'markerClearRadius', label: 'Marker clear radius (mm)', placeholder: '22', min: 0, max: 60,  step: 0.5 },
 ];
 
+const DETAILS_PARAMS: ParamDef[] = [
+  { key: 'detailsThreshold1', label: 'Sensitivity threshold 1', placeholder: '50',  min: 1, max: 255, step: 1 },
+  { key: 'detailsThreshold2', label: 'Sensitivity threshold 2', placeholder: '150', min: 1, max: 255, step: 1 },
+];
+
 function ParamGroup({ title, params, settings, onUpdate }: {
   title: string;
   params: ParamDef[];
@@ -59,7 +64,7 @@ function ParamGroup({ title, params, settings, onUpdate }: {
               max={p.max}
               step={p.step}
               placeholder={p.placeholder}
-              value={settings[p.key] ?? ''}
+              value={(settings[p.key] as number | undefined) ?? ''}
               onChange={(e) => {
                 const raw = e.target.value;
                 onUpdate(
@@ -113,6 +118,42 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
       <ParamGroup title="Contour Filtering" params={CONTOUR_PARAMS} settings={settings} onUpdate={update} />
       <ParamGroup title="Vectorization" params={VECTORIZATION_PARAMS} settings={settings} onUpdate={update} />
       <ParamGroup title="ArUco Calibration" params={ARUCO_PARAMS} settings={settings} onUpdate={update} />
+
+      <details className="settings-section">
+        <summary style={{ display: 'flex', justifyContent: 'space-between', width: '100%', paddingRight: '8px' }}>
+          <span>Detail Engraving</span>
+          <input
+            type="checkbox"
+            checked={settings.detectDetails ?? false}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => update('detectDetails', e.target.checked)}
+          />
+        </summary>
+        {settings.detectDetails && (
+          <div className="settings-grid">
+            {DETAILS_PARAMS.map((p) => (
+              <label key={p.key}>
+                <span>{p.label}</span>
+                <input
+                  type="number"
+                  min={p.min}
+                  max={p.max}
+                  step={p.step}
+                  placeholder={p.placeholder}
+                  value={(settings[p.key] as number | undefined) ?? ''}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    update(
+                      p.key,
+                      raw === '' ? undefined : Number(raw),
+                    );
+                  }}
+                />
+              </label>
+            ))}
+          </div>
+        )}
+      </details>
 
       {hasCustomParams && (
         <button className="reset-params-btn" onClick={resetParams}>
