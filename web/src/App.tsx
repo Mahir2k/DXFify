@@ -16,6 +16,7 @@ import type {
 
 const defaultSettings: ConversionSettings = {
   sheetSize: 'a4',
+  curveStrategy: 'current',
 };
 
 function getStatus(

@@ -86,11 +86,11 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
   };
 
   const hasCustomParams = Object.keys(settings).some(
-    (k) => k !== 'sheetSize' && settings[k as keyof ConversionSettings] !== undefined,
+    (k) => k !== 'sheetSize' && k !== 'curveStrategy' && settings[k as keyof ConversionSettings] !== undefined,
   );
 
   const resetParams = () => {
-    onChange({ sheetSize: settings.sheetSize });
+    onChange({ sheetSize: settings.sheetSize, curveStrategy: 'current' });
   };
 
   return (
@@ -110,6 +110,20 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
             <option value="a1">A1</option>
             <option value="letter">Letter</option>
             <option value="legal">Legal</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Curve Strategy</span>
+          <select
+            value={settings.curveStrategy ?? 'current'}
+            onChange={(event) => update('curveStrategy', event.target.value as ConversionSettings['curveStrategy'])}
+          >
+            <option value="current">Current (Douglas-Peucker)</option>
+            <option value="pratt">Strategy 1 (Pratt Corner Fillets)</option>
+            <option value="spline">Strategy 2 (Cubic B-Splines)</option>
+            <option value="gaussian">Strategy 3 (Gaussian Filter + DP)</option>
+            <option value="ransac">Strategy 4 (RANSAC CAD Fillets)</option>
           </select>
         </label>
       </div>

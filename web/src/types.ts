@@ -47,6 +47,7 @@ export interface ConversionSettings {
   detectDetails?: boolean;      // default false
   detailsThreshold1?: number;   // default 50
   detailsThreshold2?: number;   // default 150
+  curveStrategy?: 'current' | 'pratt' | 'spline' | 'gaussian' | 'ransac';
 }
 
 export interface GeometryEntity {

@@ -227,7 +227,7 @@ async function callPipelineWorker(
   inputPath: string,
   outputDir: string,
   paperSize: string,
-  processingParams: Record<string, number> = {},
+  processingParams: Record<string, any> = {},
 ) {
   const url = `${workerUrl}/process`;
   console.log(`[dxferpy] POST ${url} inputPath=${inputPath} paperSize=${paperSize}`);
@@ -310,6 +310,9 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
       }
       if (req.body.detectDetails !== undefined && req.body.detectDetails !== null && req.body.detectDetails !== '') {
         processingParams.detectDetails = req.body.detectDetails === 'true' || req.body.detectDetails === '1' || req.body.detectDetails === true;
+      }
+      if (req.body.curveStrategy !== undefined && req.body.curveStrategy !== null && req.body.curveStrategy !== '') {
+        processingParams.curveStrategy = String(req.body.curveStrategy);
       }
 
       

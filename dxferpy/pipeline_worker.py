@@ -76,6 +76,189 @@ def segment_single_image(
     return img, mask, used_aruco
 
 
+def fit_circle_pratt(points):
+    x = points[:, 0]
+    y = points[:, 1]
+    x_m = np.mean(x)
+    y_m = np.mean(y)
+    u = x - x_m
+    v = y - y_m
+    X = np.column_stack([u, v, np.ones(len(u))])
+    Y = u**2 + v**2
+    a, b, c = np.linalg.lstsq(X, Y, rcond=None)[0]
+    uc = a / 2
+    vc = b / 2
+    R = np.sqrt(uc**2 + vc**2 + c)
+    xc = uc + x_m
+    yc = vc + y_m
+    return xc, yc, R
+
+def ransac_line_fit(points, max_iterations=400, threshold=1.5):
+    best_line = None
+    best_inliers = []
+    n_pts = len(points)
+    if n_pts < 2:
+        return None
+    for _ in range(max_iterations):
+        idx = np.random.choice(n_pts, 2, replace=False)
+        p1 = points[idx[0]]
+        p2 = points[idx[1]]
+        dx = p2[0] - p1[0]
+        dy = p2[1] - p1[1]
+        l = np.hypot(dx, dy)
+        if l == 0:
+            continue
+        nx = -dy / l
+        ny = dx / l
+        d = nx * p1[0] + ny * p1[1]
+        dists = np.abs(nx * points[:, 0] + ny * points[:, 1] - d)
+        inliers = np.where(dists < threshold)[0]
+        if len(inliers) > len(best_inliers):
+            best_inliers = inliers
+            best_line = (nx, ny, d)
+    if best_line is not None and len(best_inliers) >= 2:
+        inlier_pts = points[best_inliers]
+        vx, vy, x0, y0 = cv2.fitLine(inlier_pts.astype(np.float32), cv2.DIST_L2, 0, 0.01, 0.01).squeeze()
+        nx, ny = -vy, vx
+        d = nx * x0 + ny * y0
+        return (nx, ny, d)
+    return None
+
+def get_fillet_arc(line1, line2, centroid, R):
+    nx1, ny1, d1 = line1
+    nx2, ny2, d2 = line2
+    A = np.array([[nx1, ny1], [nx2, ny2]])
+    b = np.array([d1, d2])
+    I = np.linalg.solve(A, b)
+    bisector = np.array([nx1 + nx2, ny1 + ny2])
+    bisector = bisector / np.linalg.norm(bisector)
+    dot_val = np.clip(nx1*nx2 + ny1*ny2, -1.0, 1.0)
+    theta = np.arccos(dot_val)
+    d_IC = R / np.sin(theta / 2.0)
+    C1 = I + d_IC * bisector
+    C2 = I - d_IC * bisector
+    C = C1 if np.linalg.norm(C1 - centroid) < np.linalg.norm(C2 - centroid) else C2
+    T1 = C - R * np.array([nx1, ny1])
+    T2 = C - R * np.array([nx2, ny2])
+    ang1 = np.atan2(T1[1] - C[1], T1[0] - C[0])
+    ang2 = np.atan2(T2[1] - C[1], T2[0] - C[0])
+    diff = ang2 - ang1
+    if diff > np.pi:
+        ang2 -= 2 * np.pi
+    elif diff < -np.pi:
+        ang2 += 2 * np.pi
+    arc_thetas = np.linspace(ang1, ang2, 30)
+    arc_pts = np.column_stack([C[0] + R * np.cos(arc_thetas), C[1] + R * np.sin(arc_thetas)])
+    return arc_pts
+
+def apply_pratt_arc_fit_contour(contour, x_min, y_min, w, h, centroid):
+    corners = [
+        (x_min, y_min), (x_min + w, y_min),
+        (x_min + w, y_min + h), (x_min, y_min + h)
+    ]
+    modified_contour = contour.copy()
+    n = len(contour)
+    if n < 80:
+        return modified_contour
+    for cx, cy in corners:
+        dists = (contour[:, 0, 0] - cx)**2 + (contour[:, 0, 1] - cy)**2
+        corner_idx = np.argmin(dists)
+        indices = [(corner_idx + j) % n for j in range(-40, 40)]
+        corner_pts = contour[indices].squeeze()
+        if len(corner_pts.shape) != 2 or corner_pts.shape[0] < 80:
+            continue
+        arc_points = corner_pts[20:60]
+        try:
+            xc, yc, R = fit_circle_pratt(arc_points)
+            p_start = corner_pts[20]
+            p_end = corner_pts[60]
+            theta_start = np.atan2(p_start[1] - yc, p_start[0] - xc)
+            theta_end = np.atan2(p_end[1] - yc, p_end[0] - xc)
+            diff = theta_end - theta_start
+            if diff > np.pi:
+                theta_end -= 2 * np.pi
+            elif diff < -np.pi:
+                theta_end += 2 * np.pi
+            thetas = np.linspace(theta_start, theta_end, 40)
+            arc_pts = np.column_stack([xc + R * np.cos(thetas), yc + R * np.sin(thetas)])
+            for k, idx in enumerate(indices[20:61]):
+                modified_contour[idx, 0, 0] = arc_pts[min(k, len(arc_pts)-1), 0]
+                modified_contour[idx, 0, 1] = arc_pts[min(k, len(arc_pts)-1), 1]
+        except Exception:
+            pass
+    return modified_contour
+
+def fit_contour_spline(contour):
+    n = len(contour)
+    if n < 10:
+        return contour
+    pts = contour.squeeze()
+    if len(pts.shape) != 2:
+        return contour
+    ds_factor = max(1, n // 100)
+    contour_ds = pts[::ds_factor]
+    if len(contour_ds) < 5:
+        return contour
+    try:
+        from scipy.interpolate import splprep, splev
+        tck, u = splprep([contour_ds[:, 0], contour_ds[:, 1]], s=200, per=True)
+        u_new = np.linspace(0, 1, min(300, n))
+        spline_pts = np.column_stack(splev(u_new, tck))
+        return spline_pts.astype(np.float32).reshape(-1, 1, 2)
+    except Exception:
+        return contour
+
+def apply_contour_gaussian_filter(contour):
+    n = len(contour)
+    if n < 5:
+        return contour
+    pts = contour.squeeze()
+    if len(pts.shape) != 2:
+        return contour
+    kernel_size = 15
+    sigma = 3.0
+    try:
+        smooth_x = cv2.GaussianBlur(pts[:, 0].astype(np.float32).reshape(-1, 1), (1, kernel_size), sigma).squeeze()
+        smooth_y = cv2.GaussianBlur(pts[:, 1].astype(np.float32).reshape(-1, 1), (1, kernel_size), sigma).squeeze()
+        smooth_pts = np.column_stack([smooth_x, smooth_y])
+        return smooth_pts.astype(np.float32).reshape(-1, 1, 2)
+    except Exception:
+        return contour
+
+def apply_ransac_cad_reconstruction(contour, x_min, y_min, w, h, centroid):
+    n = len(contour)
+    if n < 30:
+        return None
+    pts = contour.squeeze()
+    if len(pts.shape) != 2:
+        return None
+    top_pts = pts[(pts[:, 1] < y_min + 0.15*h) & (pts[:, 0] > x_min + 0.2*w) & (pts[:, 0] < x_min + 0.8*w)]
+    bottom_pts = pts[(pts[:, 1] > y_min + 0.85*h) & (pts[:, 0] > x_min + 0.2*w) & (pts[:, 0] < x_min + 0.8*w)]
+    left_pts = pts[(pts[:, 0] < x_min + 0.15*w) & (pts[:, 1] > y_min + 0.2*h) & (pts[:, 1] < y_min + 0.8*h)]
+    right_pts = pts[(pts[:, 0] > x_min + 0.85*w) & (pts[:, 1] > y_min + 0.2*h) & (pts[:, 1] < y_min + 0.8*h)]
+    top_line = ransac_line_fit(top_pts)
+    bottom_line = ransac_line_fit(bottom_pts)
+    left_line = ransac_line_fit(left_pts)
+    right_line = ransac_line_fit(right_pts)
+    if not (top_line and bottom_line and left_line and right_line):
+        return None
+    try:
+        R_fillet = min(w, h) * 0.1
+        arc_tl = get_fillet_arc(left_line, top_line, centroid, R_fillet)
+        arc_tr = get_fillet_arc(top_line, right_line, centroid, R_fillet)
+        arc_br = get_fillet_arc(right_line, bottom_line, centroid, R_fillet)
+        arc_bl = get_fillet_arc(bottom_line, left_line, centroid, R_fillet)
+        reconstructed = np.vstack([
+            arc_tl,
+            arc_tr,
+            arc_br,
+            arc_bl,
+            arc_tl[0]
+        ])
+        return reconstructed.astype(np.float32).reshape(-1, 1, 2)
+    except Exception:
+        return None
+
 def vectorize_single_image(
     mask,
     scale: float,
@@ -93,6 +276,7 @@ def vectorize_single_image(
     detect_details: bool = False,
     details_threshold1: int = 50,
     details_threshold2: int = 150,
+    curve_strategy: str = "current",
 ) -> dict:
     height = mask.shape[0]
 
@@ -165,12 +349,30 @@ def vectorize_single_image(
                     total_perimeter += 2 * np.pi * radius_mm
                     continue
 
+            working_contour = contour_f.copy()
+            x_min_f, y_min_f, w_f, h_f = cv2.boundingRect(working_contour)
+            centroid_f = np.array([x_min_f + w_f/2, y_min_f + h_f/2])
+            
+            if curve_strategy == 'pratt':
+                working_contour = apply_pratt_arc_fit_contour(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
+            elif curve_strategy == 'spline':
+                working_contour = fit_contour_spline(working_contour)
+            elif curve_strategy == 'gaussian':
+                working_contour = apply_contour_gaussian_filter(working_contour)
+            elif curve_strategy == 'ransac':
+                recon = apply_ransac_cad_reconstruction(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
+                if recon is not None:
+                    working_contour = recon
+
+            eps_min = 0.1 if curve_strategy in ('spline', 'ransac') else epsilon_min
+            eps_max = 0.5 if curve_strategy in ('spline', 'ransac') else epsilon_max
+
             points = vectorize_contour(
-                contour_f,
+                working_contour,
                 height,
                 scale,
-                epsilon_min=epsilon_min,
-                epsilon_max=epsilon_max,
+                epsilon_min=eps_min,
+                epsilon_max=eps_max,
                 snap_angle=snap_angle,
                 snap_min_length=snap_min_length,
             )
@@ -263,6 +465,7 @@ def run_pipeline(
     detect_details: bool = False,
     details_threshold1: int = 50,
     details_threshold2: int = 150,
+    curve_strategy: str = "current",
 ) -> dict:
     paper_w, paper_h = PAPER_SIZES.get(paper_size.lower(), PAPER_SIZES["a4"])
 
@@ -345,6 +548,7 @@ def run_pipeline(
         detect_details=detect_details,
         details_threshold1=details_threshold1,
         details_threshold2=details_threshold2,
+        curve_strategy=curve_strategy,
     )
     report["markerCenters"] = marker_centers
 
@@ -388,6 +592,7 @@ def process():
         "detectDetails": ("detect_details", lambda v: str(v).lower() in ("true", "1", "yes"), False),
         "detailsThreshold1": ("details_threshold1", int, 50),
         "detailsThreshold2": ("details_threshold2", int, 150),
+        "curveStrategy": ("curve_strategy", str, "current"),
     }
     for json_key, (py_key, cast, default) in param_defs.items():
         val = data.get(json_key)
