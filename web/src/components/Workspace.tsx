@@ -45,6 +45,8 @@ interface WorkspaceProps {
   onBrushRadiusChange?: (radius: number) => void;
   rotationTransforms?: Array<{ angle: number; cx: number; cy: number }>;
   onRotateWorkspace?: (newEntities: GeometryEntity[], angleDeg: number, cx: number, cy: number) => void;
+  hoveredCoord?: { x: number; y: number } | null;
+  onHoverCoordChange?: (coord: { x: number; y: number } | null) => void;
 }
 
 export function Workspace({
@@ -77,6 +79,8 @@ export function Workspace({
   onBrushRadiusChange,
   rotationTransforms = [],
   onRotateWorkspace,
+  hoveredCoord = null,
+  onHoverCoordChange,
 }: WorkspaceProps) {
   
   const [toolboxWidth, setToolboxWidth] = useState(72);
@@ -180,6 +184,8 @@ export function Workspace({
           brushRadius={brushRadius}
           onBrushRadiusChange={onBrushRadiusChange}
           onRotateWorkspace={onRotateWorkspace}
+          hoveredCoord={hoveredCoord}
+          onHoverCoord={onHoverCoordChange}
         />
         <ImagePreview
           result={result}
@@ -193,6 +199,8 @@ export function Workspace({
           onImgNaturalSizeChange={onImgNaturalSizeChange}
           entities={entities}
           rotationTransforms={rotationTransforms}
+          hoveredCoord={hoveredCoord}
+          onHoverCoord={onHoverCoordChange}
         />
       </div>
 

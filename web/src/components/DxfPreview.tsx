@@ -24,6 +24,8 @@ interface DxfPreviewProps {
   brushRadius?: number;
   onBrushRadiusChange?: (radius: number) => void;
   onRotateWorkspace?: (newEntities: GeometryEntity[], angleDeg: number, cx: number, cy: number) => void;
+  hoveredCoord?: { x: number; y: number } | null;
+  onHoverCoord?: (coord: { x: number; y: number } | null) => void;
 }
 
 
@@ -46,6 +48,8 @@ export function DxfPreview({
   brushRadius = 15,
   onBrushRadiusChange,
   onRotateWorkspace,
+  hoveredCoord = null,
+  onHoverCoord,
 }: DxfPreviewProps) {
   const [outerLayerEnabled, setOuterLayerEnabled] = useState(true);
   const [holeLayerEnabled, setHoleLayerEnabled] = useState(true);
@@ -756,6 +760,11 @@ export function DxfPreview({
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     updateCursorFromEvent(e);
 
+    const rawCoords = getModelCoords(e.clientX, e.clientY);
+    if (rawCoords && onHoverCoord) {
+      onHoverCoord(rawCoords);
+    }
+
     
     if (activeDrag) {
       const rawCoords = getModelCoords(e.clientX, e.clientY);
@@ -850,6 +859,9 @@ export function DxfPreview({
     setIsDragging(false);
     setCursorMm(null);
     setSnapPoint(null);
+    if (onHoverCoord) {
+      onHoverCoord(null);
+    }
   };
 
   const handleWheel = (e: React.WheelEvent<SVGSVGElement>) => {
@@ -1029,6 +1041,13 @@ export function DxfPreview({
                   )}
 
                   <g transform="scale(1, -1)">
+                    {hoveredCoord && (
+                      <g transform={`translate(${hoveredCoord.x}, ${hoveredCoord.y})`} style={{ pointerEvents: 'none' }}>
+                        <circle r={Math.max(0.2, viewWidth / 250) * 3} fill="none" stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.4} />
+                        <line x1={-Math.max(0.2, viewWidth / 250) * 6} y1={0} x2={Math.max(0.2, viewWidth / 250) * 6} y2={0} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
+                        <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
+                      </g>
+                    )}
                     {}
                   {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
                     const layer = entity.layer;

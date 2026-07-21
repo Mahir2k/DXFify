@@ -283,6 +283,7 @@ export default function App() {
   const [report, setReport] = useState<ConversionReport | null>(null);
   const [error, setError] = useState<ConversionErrorDetails | null>(null);
   const [showRunConfirm, setShowRunConfirm] = useState(false);
+  const [hoveredCoord, setHoveredCoord] = useState<{ x: number; y: number } | null>(null);
 
   
   const [gridEnabled, setGridEnabled] = useState(true);
@@ -566,6 +567,8 @@ export default function App() {
         onBrushRadiusChange={setBrushRadius}
         rotationTransforms={rotationTransforms}
         onRotateWorkspace={handleRotateWorkspace}
+        hoveredCoord={hoveredCoord}
+        onHoverCoordChange={setHoveredCoord}
       />
 
       {showRunConfirm && (

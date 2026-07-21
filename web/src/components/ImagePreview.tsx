@@ -14,6 +14,8 @@ interface ImagePreviewProps {
   onImgNaturalSizeChange: (size: { width: number; height: number }) => void;
   entities?: GeometryEntity[];
   rotationTransforms?: Array<{ angle: number; cx: number; cy: number }>;
+  hoveredCoord?: { x: number; y: number } | null;
+  onHoverCoord?: (coord: { x: number; y: number } | null) => void;
 }
 
 const tabs: Array<{ id: PreviewTab; label: string }> = [
@@ -50,6 +52,8 @@ export function ImagePreview({
   onImgNaturalSizeChange,
   entities = [],
   rotationTransforms = [],
+  hoveredCoord = null,
+  onHoverCoord,
 }: ImagePreviewProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -138,29 +142,51 @@ export function ImagePreview({
   };
 
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!isDragging) return;
-    const dx = e.clientX - lastPos.x;
-    const dy = e.clientY - lastPos.y;
+    if (isDragging) {
+      const dx = e.clientX - lastPos.x;
+      const dy = e.clientY - lastPos.y;
 
-    if (svgRef.current) {
-      const ctm = svgRef.current.getScreenCTM();
+      if (svgRef.current) {
+        const ctm = svgRef.current.getScreenCTM();
+        if (ctm) {
+          const inv = ctm.inverse();
+          const dxPx = dx * inv.a;
+          const dyPx = dy * inv.d;
+
+          const newImgX = imgX - dxPx;
+          const newImgY = imgY - dyPx;
+
+          onViewportChange({
+            x: newImgX / scale,
+            y: (newImgY - height) / scale,
+            w: w,
+            h: h,
+          });
+        }
+      }
+      setLastPos({ x: e.clientX, y: e.clientY });
+    }
+
+    if (svgRef.current && onHoverCoord) {
+      const svg = svgRef.current;
+      const ctm = svg.getScreenCTM();
       if (ctm) {
-        const inv = ctm.inverse();
-        const dxPx = dx * inv.a;
-        const dyPx = dy * inv.d;
-
-        const newImgX = imgX - dxPx;
-        const newImgY = imgY - dyPx;
-
-        onViewportChange({
-          x: newImgX / scale,
-          y: (newImgY - height) / scale,
-          w: w,
-          h: h,
-        });
+        const pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const transformed = pt.matrixTransform(ctm.inverse());
+        const x_mm = transformed.x / scale;
+        const y_mm = (transformed.y - height) / scale;
+        onHoverCoord({ x: x_mm, y: y_mm });
       }
     }
-    setLastPos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handlePointerLeave = () => {
+    setIsDragging(false);
+    if (onHoverCoord) {
+      onHoverCoord(null);
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -241,7 +267,7 @@ export function ImagePreview({
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
-                onPointerLeave={handlePointerUp}
+                onPointerLeave={handlePointerLeave}
                 onWheel={handleWheel}
               >
                 <g transform={rotationTransforms.map(t => `rotate(${t.angle}, ${t.cx * scale}, ${height - t.cy * scale})`).join(' ')}>
@@ -327,6 +353,13 @@ export function ImagePreview({
                     }
                     return null;
                   })}
+                  {hoveredCoord && (
+                    <g transform={`translate(${hoveredCoord.x * scale}, ${height - hoveredCoord.y * scale})`} style={{ pointerEvents: 'none' }}>
+                      <circle r={6 * (imgW / 400)} fill="none" stroke="#ff9800" strokeWidth={1.5 * (imgW / 400)} />
+                      <line x1={-12 * (imgW / 400)} y1={0} x2={12 * (imgW / 400)} y2={0} stroke="#ff9800" strokeWidth={1.2 * (imgW / 400)} />
+                      <line x1={0} y1={-12 * (imgW / 400)} x2={0} y2={12 * (imgW / 400)} stroke="#ff9800" strokeWidth={1.2 * (imgW / 400)} />
+                    </g>
+                  )}
                 </g>
               </svg>
             </div>
