@@ -93,7 +93,7 @@ def fit_circle_pratt(points):
     yc = vc + y_m
     return xc, yc, R
 
-def ransac_line_fit(points, max_iterations=400, threshold=1.5):
+def ransac_line_fit(points, centroid, max_iterations=400, threshold=1.5):
     best_line = None
     best_inliers = []
     n_pts = len(points)
@@ -120,6 +120,9 @@ def ransac_line_fit(points, max_iterations=400, threshold=1.5):
         inlier_pts = points[best_inliers]
         vx, vy, x0, y0 = cv2.fitLine(inlier_pts.astype(np.float32), cv2.DIST_L2, 0, 0.01, 0.01).squeeze()
         nx, ny = -vy, vx
+        v_out = np.array([x0 - centroid[0], y0 - centroid[1]])
+        if nx * v_out[0] + ny * v_out[1] < 0:
+            nx, ny = -nx, -ny
         d = nx * x0 + ny * y0
         return (nx, ny, d)
     return None
@@ -135,11 +138,9 @@ def get_fillet_arc(line1, line2, centroid, R):
     dot_val = np.clip(nx1*nx2 + ny1*ny2, -1.0, 1.0)
     theta = np.arccos(dot_val)
     d_IC = R / np.sin(theta / 2.0)
-    C1 = I + d_IC * bisector
-    C2 = I - d_IC * bisector
-    C = C1 if np.linalg.norm(C1 - centroid) < np.linalg.norm(C2 - centroid) else C2
-    T1 = C - R * np.array([nx1, ny1])
-    T2 = C - R * np.array([nx2, ny2])
+    C = I - d_IC * bisector
+    T1 = C + R * np.array([nx1, ny1])
+    T2 = C + R * np.array([nx2, ny2])
     ang1 = np.atan2(T1[1] - C[1], T1[0] - C[0])
     ang2 = np.atan2(T2[1] - C[1], T2[0] - C[0])
     diff = ang2 - ang1
@@ -236,10 +237,10 @@ def apply_ransac_cad_reconstruction(contour, x_min, y_min, w, h, centroid):
     bottom_pts = pts[(pts[:, 1] > y_min + 0.85*h) & (pts[:, 0] > x_min + 0.2*w) & (pts[:, 0] < x_min + 0.8*w)]
     left_pts = pts[(pts[:, 0] < x_min + 0.15*w) & (pts[:, 1] > y_min + 0.2*h) & (pts[:, 1] < y_min + 0.8*h)]
     right_pts = pts[(pts[:, 0] > x_min + 0.85*w) & (pts[:, 1] > y_min + 0.2*h) & (pts[:, 1] < y_min + 0.8*h)]
-    top_line = ransac_line_fit(top_pts)
-    bottom_line = ransac_line_fit(bottom_pts)
-    left_line = ransac_line_fit(left_pts)
-    right_line = ransac_line_fit(right_pts)
+    top_line = ransac_line_fit(top_pts, centroid)
+    bottom_line = ransac_line_fit(bottom_pts, centroid)
+    left_line = ransac_line_fit(left_pts, centroid)
+    right_line = ransac_line_fit(right_pts, centroid)
     if not (top_line and bottom_line and left_line and right_line):
         return None
     try:
@@ -364,18 +365,21 @@ def vectorize_single_image(
                 if recon is not None:
                     working_contour = recon
 
-            eps_min = 0.1 if curve_strategy in ('spline', 'ransac') else epsilon_min
-            eps_max = 0.5 if curve_strategy in ('spline', 'ransac') else epsilon_max
-
-            points = vectorize_contour(
-                working_contour,
-                height,
-                scale,
-                epsilon_min=eps_min,
-                epsilon_max=eps_max,
-                snap_angle=snap_angle,
-                snap_min_length=snap_min_length,
-            )
+            if curve_strategy == "current":
+                points = vectorize_contour(
+                    working_contour,
+                    height,
+                    scale,
+                    epsilon_min=epsilon_min,
+                    epsilon_max=epsilon_max,
+                    snap_angle=snap_angle,
+                    snap_min_length=snap_min_length,
+                )
+            else:
+                points = [
+                    (float(p[0, 0]) / scale, float(height - p[0, 1]) / scale)
+                    for p in working_contour
+                ]
             if points:
                 msp.add_lwpolyline(points, close=True, dxfattribs={"layer": layer})
 
