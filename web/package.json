@@ -20,6 +20,7 @@
     "multer": "^2.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "three": "^0.185.1",
     "tsx": "^4.19.2",
     "vite": "^6.0.7"
   },
@@ -29,6 +30,7 @@
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "@types/three": "^0.185.1",
     "typescript": "^5.7.2"
   }
 }

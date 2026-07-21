@@ -39,6 +39,8 @@ export interface TopBarProps {
   showBottomPanels: boolean;
   onToggleBottomPanels: () => void;
   onDownload?: () => void;
+  onExportSvg?: () => void;
+  onExportPdf?: () => void;
 }
 
 
@@ -73,6 +75,8 @@ export function TopBar(props: TopBarProps) {
     showToolbox, onToggleToolbox,
     showBottomPanels, onToggleBottomPanels,
     onDownload,
+    onExportSvg,
+    onExportPdf,
   } = props;
 
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -149,7 +153,7 @@ export function TopBar(props: TopBarProps) {
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [canRun, canDownload, isConverting, dxfUrl, dialog, onRun, onToolChange, onZoomIn, onZoomOut, onFitToView, onToggleGrid, onPreviewTabChange, onDownload]);
+  }, [canRun, canDownload, isConverting, dxfUrl, dialog, onRun, onToolChange, onZoomIn, onZoomOut, onFitToView, onToggleGrid, onPreviewTabChange, onDownload, onExportSvg, onExportPdf]);
 
   
   const click = (name: string) => {
@@ -182,6 +186,16 @@ export function TopBar(props: TopBarProps) {
         action: onDownload || (() => { if (dxfUrl) downloadUrl(dxfUrl, 'result.dxf'); }),
         disabled: !canDownload,
         shortcut: 'Ctrl+S',
+      },
+      {
+        label: 'Export SVG',
+        action: onExportSvg,
+        disabled: !canDownload,
+      },
+      {
+        label: 'Export PDF',
+        action: onExportPdf,
+        disabled: !canDownload,
       },
       SEP,
       { label: 'Reset Workspace', action: onReset },

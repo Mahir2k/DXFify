@@ -23,7 +23,21 @@ app = Flask(__name__)
 
 print("[worker] Loading rembg BiRefNet model...", flush=True)
 _t0 = time.time()
-rembg_session = new_session("birefnet-general-lite")
+import onnxruntime as ort
+from rembg.sessions.birefnet_general_lite import BiRefNetSessionGeneralLite
+sess_opts = ort.SessionOptions()
+sess_opts.enable_cpu_mem_arena = False
+sess_opts.enable_mem_pattern = False
+if "OMP_NUM_THREADS" in os.environ:
+    threads = int(os.environ["OMP_NUM_THREADS"])
+    sess_opts.inter_op_num_threads = threads
+    sess_opts.intra_op_num_threads = threads
+providers = ["CPUExecutionProvider"]
+if "CUDAExecutionProvider" in ort.get_available_providers():
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+elif "ROCMExecutionProvider" in ort.get_available_providers():
+    providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
+rembg_session = BiRefNetSessionGeneralLite("birefnet-general-lite", sess_opts, providers=providers)
 print(f"[worker] Model loaded in {time.time() - _t0:.1f}s", flush=True)
 
 
@@ -45,6 +59,14 @@ def segment_single_image(
     rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     rembg_mask = remove(rgb_img, session=session, only_mask=True)
     mask = (np.array(rembg_mask) > mask_threshold).astype(np.uint8) * 255
+
+    # Refine boundaries using Guided Filtering
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    guide_float = gray.astype(np.float32) / 255.0
+    mask_float = (mask > 0).astype(np.float32)
+    refined_float = cv2.ximgproc.guidedFilter(guide=guide_float, src=mask_float, radius=4, eps=1e-4)
+    mask = (refined_float > 0.5).astype(np.uint8) * 255
+
     mask = cv2.erode(
         mask,
         np.ones((erosion_kernel, erosion_kernel), np.uint8),
@@ -260,7 +282,7 @@ def run_pipeline(
         erosion_iterations=erosion_iterations,
     )
 
-    H, scale = get_homography(
+    H, scale, marker_centers = get_homography(
         input_path,
         paper_w,
         paper_h,
@@ -324,6 +346,7 @@ def run_pipeline(
         details_threshold1=details_threshold1,
         details_threshold2=details_threshold2,
     )
+    report["markerCenters"] = marker_centers
 
     with open(result_json, "w") as f:
         json.dump(report, f, indent=2)

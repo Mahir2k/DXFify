@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ConversionResult, ToolId, Viewport, GeometryEntity } from '../types';
 import { Ruler } from './Ruler';
+import * as THREE from 'three';
+
 
 
 
@@ -46,6 +48,11 @@ export function DxfPreview({
   const [outerLayerEnabled, setOuterLayerEnabled] = useState(true);
   const [holeLayerEnabled, setHoleLayerEnabled] = useState(true);
   const [detailsLayerEnabled, setDetailsLayerEnabled] = useState(true);
+
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
 
   const [isDragging, setIsDragging] = useState(false);
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
@@ -99,7 +106,14 @@ export function DxfPreview({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  
+  useEffect(() => {
+    return () => {
+      if (rendererRef.current) {
+        rendererRef.current.dispose();
+      }
+    };
+  }, []);
+
   const baseMinX = (result?.report?.bboxMinXMm || 0) - 10;
   const baseMinY = result?.report?.bboxMaxYMm ? -(result.report.bboxMaxYMm + 10) : 0;
   const baseWidth = (result?.report?.bboxWidthMm || 100) + 20;
@@ -116,6 +130,104 @@ export function DxfPreview({
   const viewY = activeViewport.y;
   const viewWidth = activeViewport.w;
   const viewHeight = activeViewport.h;
+
+  useEffect(() => {
+    const showGeometry = entities && entities.length > 0;
+    if (!showGeometry || !canvasRef.current) return;
+
+    if (!rendererRef.current) {
+      const renderer = new THREE.WebGLRenderer({
+        canvas: canvasRef.current,
+        antialias: true,
+        alpha: true,
+      });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      rendererRef.current = renderer;
+
+      const scene = new THREE.Scene();
+      sceneRef.current = scene;
+
+      const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
+      cameraRef.current = camera;
+    }
+
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    if (!renderer || !scene || !camera) return;
+
+    const rect = canvasRef.current.getBoundingClientRect();
+    renderer.setSize(rect.width, rect.height, false);
+
+    camera.left = viewX;
+    camera.right = viewX + viewWidth;
+    camera.top = -viewY;
+    camera.bottom = -(viewY + viewHeight);
+    camera.updateProjectionMatrix();
+
+    while (scene.children.length > 0) {
+      const obj = scene.children[0];
+      if (obj instanceof THREE.Line) {
+        obj.geometry.dispose();
+        if (Array.isArray(obj.material)) {
+          obj.material.forEach(m => m.dispose());
+        } else {
+          obj.material.dispose();
+        }
+      }
+      scene.remove(obj);
+    }
+
+    entities.forEach(entity => {
+      const layer = entity.layer;
+      if (layer === 'HOLES' && !holeLayerEnabled) return;
+      if (layer === 'OUTER' && !outerLayerEnabled) return;
+      if (layer === 'DETAILS' && !detailsLayerEnabled) return;
+
+      let colorHex = '#ffffff';
+      if (layer === 'HOLES') colorHex = '#5b9bd5';
+      else if (layer === 'DETAILS') colorHex = '#10b981';
+
+      const color = new THREE.Color(colorHex);
+
+      if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
+        const points: THREE.Vector3[] = [];
+        const segments = 64;
+        for (let i = 0; i <= segments; i++) {
+          const theta = (i / segments) * Math.PI * 2;
+          points.push(new THREE.Vector3(entity.cx + Math.cos(theta) * entity.r, entity.cy + Math.sin(theta) * entity.r, 0));
+        }
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color });
+        const line = new THREE.Line(geometry, material);
+        scene.add(line);
+      } else if (entity.type === 'polyline' && entity.points && entity.points.length > 0) {
+        const points: THREE.Vector3[] = [];
+        entity.points.forEach(pt => {
+          points.push(new THREE.Vector3(pt[0], pt[1], 0));
+        });
+        if (entity.closed) {
+          points.push(new THREE.Vector3(entity.points[0][0], entity.points[0][1], 0));
+        }
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ color });
+        const line = new THREE.Line(geometry, material);
+        scene.add(line);
+      }
+    });
+
+    renderer.render(scene, camera);
+  }, [
+    entities,
+    viewport,
+    outerLayerEnabled,
+    holeLayerEnabled,
+    detailsLayerEnabled,
+    viewX,
+    viewY,
+    viewWidth,
+    viewHeight,
+  ]);
 
   const getModelCoords = (clientX: number, clientY: number): { x: number; y: number } | null => {
     if (!svgRef.current) return null;
@@ -690,55 +802,55 @@ export function DxfPreview({
             </div>
 
             {showGeometry ? (
-              <svg
-                ref={svgRef}
-                viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`}
-                className="native-dxf"
-                role="img"
-                aria-label="Native DXF preview"
-                style={{ width: '100%', height: '100%', cursor: selectedTool === 'select' ? (activeDrag ? 'move' : isDragging ? 'grabbing' : 'grab') : selectedTool === 'measure' ? 'crosshair' : selectedTool === 'brush' ? 'pointer' : 'default' }}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerLeave={handlePointerLeave}
-                onDoubleClick={handleDoubleClick}
-                onWheel={handleWheel}
-              >
-                {}
-                {outerLayerEnabled && result?.report?.bboxWidthMm != null && result?.report?.bboxHeightMm != null && (
-                  <g className="dimension-overlay" style={{ opacity: 0.6 }}>
-                    <path d={`M ${result.report.bboxMinXMm || 0} ${-(result.report.bboxMaxYMm || 0) - 5} L ${(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm} ${-(result.report.bboxMaxYMm || 0) - 5}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
-                    <text x={(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm / 2} y={-(result.report.bboxMaxYMm || 0) - 7} fill="var(--accent)" fontSize="4" textAnchor="middle" className="tabular-nums">
-                      {result.report.bboxWidthMm.toFixed(2)}
-                    </text>
-                    <path d={`M ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0)} L ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
-                    <text x={(result.report.bboxMinXMm || 0) - 7} y={-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2} fill="var(--accent)" fontSize="4" textAnchor="middle" transform={`rotate(-90 ${(result.report.bboxMinXMm || 0) - 7} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2})`} className="tabular-nums">
-                      {result.report.bboxHeightMm.toFixed(2)}
-                    </text>
-                  </g>
-                )}
+              <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+                <canvas
+                  ref={canvasRef}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    pointerEvents: 'none',
+                  }}
+                />
+                <svg
+                  ref={svgRef}
+                  viewBox={`${viewX} ${viewY} ${viewWidth} ${viewHeight}`}
+                  className="native-dxf"
+                  role="img"
+                  aria-label="Native DXF preview"
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: '100%',
+                    background: 'transparent',
+                    cursor: selectedTool === 'select' ? (activeDrag ? 'move' : isDragging ? 'grabbing' : 'grab') : selectedTool === 'measure' ? 'crosshair' : selectedTool === 'brush' ? 'pointer' : 'default'
+                  }}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerLeave={handlePointerLeave}
+                  onDoubleClick={handleDoubleClick}
+                  onWheel={handleWheel}
+                >
+                  {outerLayerEnabled && result?.report?.bboxWidthMm != null && result?.report?.bboxHeightMm != null && (
+                    <g className="dimension-overlay" style={{ opacity: 0.6 }}>
+                      <path d={`M ${result.report.bboxMinXMm || 0} ${-(result.report.bboxMaxYMm || 0) - 5} L ${(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm} ${-(result.report.bboxMaxYMm || 0) - 5}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
+                      <text x={(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm / 2} y={-(result.report.bboxMaxYMm || 0) - 7} fill="var(--accent)" fontSize="4" textAnchor="middle" className="tabular-nums">
+                        {result.report.bboxWidthMm.toFixed(2)}
+                      </text>
+                      <path d={`M ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0)} L ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
+                      <text x={(result.report.bboxMinXMm || 0) - 7} y={-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2} fill="var(--accent)" fontSize="4" textAnchor="middle" transform={`rotate(-90 ${(result.report.bboxMinXMm || 0) - 7} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2})`} className="tabular-nums">
+                        {result.report.bboxHeightMm.toFixed(2)}
+                      </text>
+                    </g>
+                  )}
 
-                <g transform="scale(1, -1)">
-                  {entities.map((entity, idx) => {
-                    const layer = entity.layer;
-                    if (layer === 'HOLES' && !holeLayerEnabled) return null;
-                    if (layer === 'OUTER' && !outerLayerEnabled) return null;
-                    if (layer === 'DETAILS' && !detailsLayerEnabled) return null;
-                    const className = layer === 'HOLES' ? 'hole-line' : layer === 'DETAILS' ? 'detail-line' : 'outer-line';
-                    if (entity.type === 'circle') {
-                      return (
-                        <circle key={idx} className={className} cx={entity.cx} cy={entity.cy} r={entity.r} fill="none" strokeWidth="0.5" />
-                      );
-                    } else if (entity.type === 'polyline' && entity.points) {
-                      const d = entity.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ') + (entity.closed ? ' Z' : '');
-                      return (
-                        <path key={idx} className={className} d={d} fill="none" strokeWidth="0.5" />
-                      );
-                    }
-                    return null;
-                  })}
-
-                  {}
+                  <g transform="scale(1, -1)">
+                    {}
                   {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
                     const layer = entity.layer;
                     if (layer === 'HOLES' && !holeLayerEnabled) return null;
@@ -933,7 +1045,8 @@ export function DxfPreview({
                   )}
                 </g>
               </svg>
-            ) : result ? (
+            </div>
+          ) : result ? (
               <div className="empty-state">
                 <strong>Processing DXF</strong>
                 <span>Waiting for geometry...</span>

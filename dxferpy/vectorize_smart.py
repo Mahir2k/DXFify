@@ -37,7 +37,7 @@ PAPER_SIZES = {
 
 def get_homography(orig_path, paper_w=210.0, paper_h=297.0, *, marker_offset_x=32.2, marker_offset_y=34.2):
     img = cv2.imread(orig_path)
-    if img is None: return None, 1.0
+    if img is None: return None, 1.0, {}
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
@@ -46,11 +46,19 @@ def get_homography(orig_path, paper_w=210.0, paper_h=297.0, *, marker_offset_x=3
 
     corners, ids, rejected = detector.detectMarkers(gray)
 
+    marker_centers_json = {}
+    if ids is not None:
+        for i in range(len(ids)):
+            m_id = int(ids[i][0] if isinstance(ids[i], (list, np.ndarray)) else ids[i])
+            center = np.mean(corners[i][0], axis=0)
+            marker_centers_json[str(m_id)] = [float(center[0]), float(center[1])]
+
     if ids is not None and len(ids) == 4:
         marker_centers = {}
         for i in range(len(ids)):
+            m_id = int(ids[i][0] if isinstance(ids[i], (list, np.ndarray)) else ids[i])
             center = np.mean(corners[i][0], axis=0)
-            marker_centers[int(ids[i])] = center
+            marker_centers[m_id] = center
             
         if all(k in marker_centers for k in [0, 1, 2, 3]):
             pts_src = np.array([
@@ -70,8 +78,8 @@ def get_homography(orig_path, paper_w=210.0, paper_h=297.0, *, marker_offset_x=3
             ], dtype=np.float32)
             
             H = cv2.getPerspectiveTransform(pts_src, pts_dst)
-            return H, scale
-    return None, 1.0
+            return H, scale, marker_centers_json
+    return None, 1.0, marker_centers_json
 
 def intersect_lines(x0_1, y0_1, vx_1, vy_1, x0_2, y0_2, vx_2, vy_2):
     det = vx_1 * vy_2 - vy_1 * vx_2
@@ -370,7 +378,7 @@ def process_image(img_path, paper_w=210.0, paper_h=297.0):
     mask = img[:, :, 3]
     orig_path = img_path.replace("output/rgba_", "samples/").replace(".png", ".jpg")
     
-    H, scale = get_homography(orig_path, paper_w, paper_h)
+    H, scale, _ = get_homography(orig_path, paper_w, paper_h)
     if H is not None:
         height = int(paper_h * scale)
     else:
@@ -455,7 +463,15 @@ def extract_details(
 
     smoothed = cv2.bilateralFilter(gray, 7, 50, 50)
 
-    edges = cv2.Canny(smoothed, threshold1, threshold2)
+    # Compute adaptive Canny thresholds using Otsu's thresholding
+    masked_smoothed = cv2.bitwise_and(smoothed, detail_zone)
+    high_thresh, _ = cv2.threshold(masked_smoothed, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    low_thresh = 0.5 * high_thresh
+    if high_thresh <= 0:
+        high_thresh = threshold2
+        low_thresh = threshold1
+
+    edges = cv2.Canny(smoothed, low_thresh, high_thresh)
 
     edges = cv2.bitwise_and(edges, detail_zone)
 

@@ -1,10 +1,11 @@
 import express from 'express';
 import multer from 'multer';
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, unlink, writeFile, stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { spawn, ChildProcess } from 'node:child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,12 +20,120 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 await mkdir(jobsRoot, { recursive: true });
 await mkdir(incomingRoot, { recursive: true });
 
+// --- Python Worker Lifecycle Management ---
+let workerProcess: ChildProcess | null = null;
+function startPythonWorker() {
+  if (isMockMode) return;
+  const pythonExec = path.resolve(repoRoot, 'dxferpy', 'venv', 'bin', 'python3');
+  const workerScript = path.resolve(repoRoot, 'dxferpy', 'pipeline_worker.py');
+  
+  console.log(`[dxfer-server] Spawning Python worker: ${pythonExec} ${workerScript}`);
+  workerProcess = spawn(pythonExec, [workerScript], {
+    cwd: path.resolve(repoRoot, 'dxferpy'),
+    env: { ...process.env, DXFERPY_PORT: '8788' }
+  });
+
+  workerProcess.stdout?.on('data', (data) => {
+    console.log(`[worker-stdout] ${data.toString().trim()}`);
+  });
+
+  workerProcess.stderr?.on('data', (data) => {
+    console.error(`[worker-stderr] ${data.toString().trim()}`);
+  });
+
+  workerProcess.on('exit', (code) => {
+    console.log(`[dxfer-server] Python worker exited with code ${code}`);
+  });
+}
+
+startPythonWorker();
+
+const cleanUp = () => {
+  if (workerProcess) {
+    console.log('[dxfer-server] Killing Python worker process...');
+    workerProcess.kill();
+    workerProcess = null;
+  }
+};
+
+process.on('exit', cleanUp);
+process.on('SIGINT', () => { cleanUp(); process.exit(); });
+process.on('SIGTERM', () => { cleanUp(); process.exit(); });
+process.on('uncaughtException', (err) => { console.error(err); cleanUp(); process.exit(1); });
+
+// --- Expiry Job Sweeping Scheduler ---
+async function sweepExpiredJobs() {
+  try {
+    const folders = await readdir(jobsRoot);
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    
+    for (const folder of folders) {
+      const jobFolder = path.join(jobsRoot, folder);
+      const folderStat = await stat(jobFolder).catch(() => null);
+      if (!folderStat) continue;
+      
+      const ageMs = now - folderStat.mtime.getTime();
+      if (ageMs > oneDayMs) {
+        console.log(`[cleanup-cron] Deleting expired job folder: ${jobFolder} (age: ${(ageMs / 3600000).toFixed(1)} hours)`);
+        await rm(jobFolder, { recursive: true, force: true }).catch((err) => {
+          console.error(`[cleanup-cron] Failed to delete ${jobFolder}:`, err.message);
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[cleanup-cron] Error sweeping jobs:', err);
+  }
+}
+
+setInterval(sweepExpiredJobs, 60 * 60 * 1000);
+sweepExpiredJobs();
+
+// --- Inference Concurrency Queue ---
+const queue: Array<{
+  fn: () => Promise<any>;
+  resolve: (value: any) => void;
+  reject: (reason?: any) => void;
+}> = [];
+let processingQueue = false;
+
+async function processQueue() {
+  if (processingQueue || queue.length === 0) return;
+  processingQueue = true;
+
+  const { fn, resolve, reject } = queue.shift()!;
+  try {
+    const result = await fn();
+    resolve(result);
+  } catch (error) {
+    reject(error);
+  } finally {
+    processingQueue = false;
+    processQueue();
+  }
+}
+
+function enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    queue.push({ fn, resolve, reject });
+    processQueue();
+  });
+}
+
 const app = express();
 const upload = multer({
   dest: incomingRoot,
   limits: {
-    fileSize: 30 * 1024 * 1024,
+    fileSize: 15 * 1024 * 1024, // 15MB limit
   },
+  fileFilter: (_req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/png', 'image/jpg'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only JPEG and PNG are allowed.'));
+    }
+  }
 });
 
 const sheetSizes: Record<string, { width: number; height: number }> = {
@@ -212,7 +321,7 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
         });
       }
 
-      report = await callPipelineWorker(inputPath, jobFolder, paperSize, processingParams);
+      report = await enqueue(() => callPipelineWorker(inputPath, jobFolder, paperSize, processingParams));
     }
 
     const files = await collectJobFiles(jobId);
@@ -269,6 +378,14 @@ app.get('/api/health', async (_req, res) => {
     workerUrl,
     workerOk,
   });
+});
+
+// Error handling middleware for Multer and custom validation errors
+app.use((err: any, _req: any, res: any, next: any) => {
+  if (err instanceof Error) {
+    return res.status(400).json({ success: false, message: err.message });
+  }
+  next(err);
 });
 
 const port = Number(process.env.PORT ?? 8787);

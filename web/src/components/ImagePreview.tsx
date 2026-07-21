@@ -251,6 +251,45 @@ export function ImagePreview({
                 />
 
                 {}
+                {activeImage === sourceImageUrl && result?.report?.markerCenters && (
+                  <g style={{ pointerEvents: 'none' }}>
+                    {result.report.markerCenters['0'] && result.report.markerCenters['1'] && result.report.markerCenters['2'] && result.report.markerCenters['3'] && (
+                      <polygon
+                        points={`${result.report.markerCenters['0'][0]},${result.report.markerCenters['0'][1]} ${result.report.markerCenters['1'][0]},${result.report.markerCenters['1'][1]} ${result.report.markerCenters['2'][0]},${result.report.markerCenters['2'][1]} ${result.report.markerCenters['3'][0]},${result.report.markerCenters['3'][1]}`}
+                        fill="rgba(76, 217, 100, 0.15)"
+                        stroke="#4cd964"
+                        strokeWidth={Math.max(1, 2 * (imgW / 400))}
+                      />
+                    )}
+                    {Object.entries(result.report.markerCenters).map(([id, pt]) => {
+                      const [mx, my] = pt as [number, number];
+                      return (
+                        <g key={id}>
+                          <circle
+                            cx={mx}
+                            cy={my}
+                            r={Math.max(3, 6 * (imgW / 400))}
+                            fill="#4cd964"
+                            stroke="#ffffff"
+                            strokeWidth={Math.max(0.5, 1.5 * (imgW / 400))}
+                          />
+                          <text
+                            x={mx}
+                            y={my + Math.max(8, 18 * (imgW / 400))}
+                            fill="#4cd964"
+                            fontSize={Math.max(6, 12 * (imgW / 400))}
+                            fontWeight="bold"
+                            textAnchor="middle"
+                            style={{ filter: 'drop-shadow(1px 1px 1px rgba(0,0,0,0.8))' }}
+                          >
+                            ID {id}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </g>
+                )}
+
                 <g style={{ opacity: 0.8, pointerEvents: 'none' }}>
                   {entities.map((entity, idx) => {
                     const isHole = entity.layer === 'HOLES';

@@ -89,7 +89,16 @@ if __name__ == "__main__":
                 pass
     os.makedirs("output", exist_ok=True)
 
-    session = new_session("birefnet-general-lite")
+    import onnxruntime as ort
+    from rembg.sessions.birefnet_general_lite import BiRefNetSessionGeneralLite
+    sess_opts = ort.SessionOptions()
+    sess_opts.enable_cpu_mem_arena = False
+    sess_opts.enable_mem_pattern = False
+    if "OMP_NUM_THREADS" in os.environ:
+        threads = int(os.environ["OMP_NUM_THREADS"])
+        sess_opts.inter_op_num_threads = threads
+        sess_opts.intra_op_num_threads = threads
+    session = BiRefNetSessionGeneralLite("birefnet-general-lite", sess_opts)
 
     images = glob.glob("samples/*.jpg") + glob.glob("samples/*.png")
     for img_path in images:

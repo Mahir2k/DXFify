@@ -71,6 +71,7 @@ export interface ConversionReport {
   bboxMaxYMm?: number;
   perimeterMm?: number;
   entities?: GeometryEntity[];
+  markerCenters?: Record<string, [number, number]>;
 }
 
 export interface ConversionFiles {
