@@ -291,8 +291,9 @@ export default function App() {
 
   
   const [entities, setEntities] = useState<GeometryEntity[]>([]);
-  const [history, setHistory] = useState<GeometryEntity[][]>([]);
-  const [redoStack, setRedoStack] = useState<GeometryEntity[][]>([]);
+  const [rotationTransforms, setRotationTransforms] = useState<Array<{ angle: number; cx: number; cy: number }>>([]);
+  const [history, setHistory] = useState<Array<{ entities: GeometryEntity[]; rotationTransforms: Array<{ angle: number; cx: number; cy: number }> }>>([]);
+  const [redoStack, setRedoStack] = useState<Array<{ entities: GeometryEntity[]; rotationTransforms: Array<{ angle: number; cx: number; cy: number }> }>>([]);
 
   
   const [brushShape, setBrushShape] = useState<'circle' | 'square'>('circle');
@@ -314,6 +315,7 @@ export default function App() {
     setImgNaturalSize(null);
     setViewport(null);
     setEntities([]);
+    setRotationTransforms([]);
     setHistory([]);
     setRedoStack([]);
   };
@@ -332,6 +334,7 @@ export default function App() {
     setImgNaturalSize(null);
     setViewport(null);
     setEntities([]);
+    setRotationTransforms([]);
     setHistory([]);
     setRedoStack([]);
   };
@@ -344,6 +347,7 @@ export default function App() {
     setReport(null);
     setSelectedPreviewTab('debug');
     setEntities([]);
+    setRotationTransforms([]);
     setHistory([]);
     setRedoStack([]);
 
@@ -353,7 +357,8 @@ export default function App() {
       setReport(result.report);
       if (result.report?.entities) {
         setEntities(result.report.entities);
-        setHistory([result.report.entities]);
+        setRotationTransforms([]);
+        setHistory([{ entities: result.report.entities, rotationTransforms: [] }]);
         setRedoStack([]);
       }
       setViewport(getDefaultViewport(result, imgNaturalSize));
@@ -410,14 +415,22 @@ export default function App() {
     setEntities(newEntities);
     if (commitToHistory) {
       setHistory((prev) => {
-        
-        if (prev.length > 0 && prev[prev.length - 1] === newEntities) {
-          return prev;
-        }
-        return [...prev, newEntities];
+        const nextState = { entities: newEntities, rotationTransforms };
+        return [...prev, nextState];
       });
       setRedoStack([]);
     }
+  };
+
+  const handleRotateWorkspace = (newEntities: GeometryEntity[], angleDeg: number, cx: number, cy: number) => {
+    const nextTransforms = [...rotationTransforms, { angle: angleDeg, cx, cy }];
+    setEntities(newEntities);
+    setRotationTransforms(nextTransforms);
+    setHistory((prev) => {
+      const nextState = { entities: newEntities, rotationTransforms: nextTransforms };
+      return [...prev, nextState];
+    });
+    setRedoStack([]);
   };
 
   const handleUndo = () => {
@@ -425,7 +438,8 @@ export default function App() {
     const current = history[history.length - 1];
     const prev = history[history.length - 2];
     setHistory((h) => h.slice(0, -1));
-    setEntities(prev);
+    setEntities(prev.entities);
+    setRotationTransforms(prev.rotationTransforms);
     setRedoStack((r) => [current, ...r]);
   };
 
@@ -434,7 +448,8 @@ export default function App() {
     const next = redoStack[0];
     setRedoStack((r) => r.slice(1));
     setHistory((h) => [...h, next]);
-    setEntities(next);
+    setEntities(next.entities);
+    setRotationTransforms(next.rotationTransforms);
   };
 
   const handleToolChange = (tool: ToolId) => {
@@ -547,6 +562,8 @@ export default function App() {
         brushRadius={brushRadius}
         onBrushShapeChange={setBrushShape}
         onBrushRadiusChange={setBrushRadius}
+        rotationTransforms={rotationTransforms}
+        onRotateWorkspace={handleRotateWorkspace}
       />
     </main>
   );

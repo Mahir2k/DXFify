@@ -13,6 +13,7 @@ interface ImagePreviewProps {
   onViewportChange: (vp: Viewport) => void;
   onImgNaturalSizeChange: (size: { width: number; height: number }) => void;
   entities?: GeometryEntity[];
+  rotationTransforms?: Array<{ angle: number; cx: number; cy: number }>;
 }
 
 const tabs: Array<{ id: PreviewTab; label: string }> = [
@@ -48,6 +49,7 @@ export function ImagePreview({
   onViewportChange,
   onImgNaturalSizeChange,
   entities = [],
+  rotationTransforms = [],
 }: ImagePreviewProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -242,53 +244,54 @@ export function ImagePreview({
                 onPointerLeave={handlePointerUp}
                 onWheel={handleWheel}
               >
-                <image
-                  href={activeImage}
-                  x={0}
-                  y={0}
-                  width={width}
-                  height={height}
-                />
+                <g transform={rotationTransforms.map(t => `rotate(${t.angle}, ${t.cx * scale}, ${height - t.cy * scale})`).join(' ')}>
+                  <image
+                    href={activeImage}
+                    x={0}
+                    y={0}
+                    width={width}
+                    height={height}
+                  />
 
-                {}
-                {activeImage === sourceImageUrl && result?.report?.markerCenters && (
-                  <g style={{ pointerEvents: 'none' }}>
-                    {result.report.markerCenters['0'] && result.report.markerCenters['1'] && result.report.markerCenters['2'] && result.report.markerCenters['3'] && (
-                      <polygon
-                        points={`${result.report.markerCenters['0'][0]},${result.report.markerCenters['0'][1]} ${result.report.markerCenters['1'][0]},${result.report.markerCenters['1'][1]} ${result.report.markerCenters['2'][0]},${result.report.markerCenters['2'][1]} ${result.report.markerCenters['3'][0]},${result.report.markerCenters['3'][1]}`}
-                        fill="rgba(76, 217, 100, 0.15)"
-                        stroke="#4cd964"
-                        strokeWidth={Math.max(1, 2 * (imgW / 400))}
-                      />
-                    )}
-                    {Object.entries(result.report.markerCenters).map(([id, pt]) => {
-                      const [mx, my] = pt as [number, number];
-                      return (
-                        <g key={id}>
-                          <circle
-                            cx={mx}
-                            cy={my}
-                            r={Math.max(3, 6 * (imgW / 400))}
-                            fill="#4cd964"
-                            stroke="#ffffff"
-                            strokeWidth={Math.max(0.5, 1.5 * (imgW / 400))}
-                          />
-                          <text
-                            x={mx}
-                            y={my + Math.max(8, 18 * (imgW / 400))}
-                            fill="#4cd964"
-                            fontSize={Math.max(6, 12 * (imgW / 400))}
-                            fontWeight="bold"
-                            textAnchor="middle"
-                            style={{ filter: 'drop-shadow(1px 1px 1px rgba(0,0,0,0.8))' }}
-                          >
-                            ID {id}
-                          </text>
-                        </g>
-                      );
-                    })}
-                  </g>
-                )}
+                  {activeImage === sourceImageUrl && result?.report?.markerCenters && (
+                    <g style={{ pointerEvents: 'none' }}>
+                      {result.report.markerCenters['0'] && result.report.markerCenters['1'] && result.report.markerCenters['2'] && result.report.markerCenters['3'] && (
+                        <polygon
+                          points={`${result.report.markerCenters['0'][0]},${result.report.markerCenters['0'][1]} ${result.report.markerCenters['1'][0]},${result.report.markerCenters['1'][1]} ${result.report.markerCenters['2'][0]},${result.report.markerCenters['2'][1]} ${result.report.markerCenters['3'][0]},${result.report.markerCenters['3'][1]}`}
+                          fill="rgba(76, 217, 100, 0.15)"
+                          stroke="#4cd964"
+                          strokeWidth={Math.max(1, 2 * (imgW / 400))}
+                        />
+                      )}
+                      {Object.entries(result.report.markerCenters).map(([id, pt]) => {
+                        const [mx, my] = pt as [number, number];
+                        return (
+                          <g key={id}>
+                            <circle
+                              cx={mx}
+                              cy={my}
+                              r={Math.max(3, 6 * (imgW / 400))}
+                              fill="#4cd964"
+                              stroke="#ffffff"
+                              strokeWidth={Math.max(0.5, 1.5 * (imgW / 400))}
+                            />
+                            <text
+                              x={mx}
+                              y={my + Math.max(8, 18 * (imgW / 400))}
+                              fill="#4cd964"
+                              fontSize={Math.max(6, 12 * (imgW / 400))}
+                              fontWeight="bold"
+                              textAnchor="middle"
+                              style={{ filter: 'drop-shadow(1px 1px 1px rgba(0,0,0,0.8))' }}
+                            >
+                              ID {id}
+                            </text>
+                          </g>
+                        );
+                      })}
+                    </g>
+                  )}
+                </g>
 
                 <g style={{ opacity: 0.8, pointerEvents: 'none' }}>
                   {entities.map((entity, idx) => {

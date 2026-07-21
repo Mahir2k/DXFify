@@ -43,6 +43,8 @@ interface WorkspaceProps {
   brushRadius?: number;
   onBrushShapeChange?: (shape: 'circle' | 'square') => void;
   onBrushRadiusChange?: (radius: number) => void;
+  rotationTransforms?: Array<{ angle: number; cx: number; cy: number }>;
+  onRotateWorkspace?: (newEntities: GeometryEntity[], angleDeg: number, cx: number, cy: number) => void;
 }
 
 export function Workspace({
@@ -73,6 +75,8 @@ export function Workspace({
   brushRadius,
   onBrushShapeChange,
   onBrushRadiusChange,
+  rotationTransforms = [],
+  onRotateWorkspace,
 }: WorkspaceProps) {
   
   const [toolboxWidth, setToolboxWidth] = useState(72);
@@ -175,6 +179,7 @@ export function Workspace({
           brushShape={brushShape}
           brushRadius={brushRadius}
           onBrushRadiusChange={onBrushRadiusChange}
+          onRotateWorkspace={onRotateWorkspace}
         />
         <ImagePreview
           result={result}
@@ -187,6 +192,7 @@ export function Workspace({
           onViewportChange={onViewportChange}
           onImgNaturalSizeChange={onImgNaturalSizeChange}
           entities={entities}
+          rotationTransforms={rotationTransforms}
         />
       </div>
 

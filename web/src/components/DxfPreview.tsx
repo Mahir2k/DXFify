@@ -23,6 +23,7 @@ interface DxfPreviewProps {
   brushShape?: 'circle' | 'square';
   brushRadius?: number;
   onBrushRadiusChange?: (radius: number) => void;
+  onRotateWorkspace?: (newEntities: GeometryEntity[], angleDeg: number, cx: number, cy: number) => void;
 }
 
 
@@ -44,10 +45,34 @@ export function DxfPreview({
   brushShape = 'circle',
   brushRadius = 15,
   onBrushRadiusChange,
+  onRotateWorkspace,
 }: DxfPreviewProps) {
   const [outerLayerEnabled, setOuterLayerEnabled] = useState(true);
   const [holeLayerEnabled, setHoleLayerEnabled] = useState(true);
   const [detailsLayerEnabled, setDetailsLayerEnabled] = useState(true);
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  entities.forEach(entity => {
+    if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
+      minX = Math.min(minX, entity.cx - entity.r);
+      minY = Math.min(minY, entity.cy - entity.r);
+      maxX = Math.max(maxX, entity.cx + entity.r);
+      maxY = Math.max(maxY, entity.cy + entity.r);
+    } else if (entity.type === 'polyline' && entity.points) {
+      entity.points.forEach(pt => {
+        minX = Math.min(minX, pt[0]);
+        minY = Math.min(minY, pt[1]);
+        maxX = Math.max(maxX, pt[0]);
+        maxY = Math.max(maxY, pt[1]);
+      });
+    }
+  });
+
+  const hasBounds = minX !== Infinity;
+  const bboxWidth = hasBounds ? (maxX - minX) : 0;
+  const bboxHeight = hasBounds ? (maxY - minY) : 0;
+  const bboxMinX = hasBounds ? minX : 0;
+  const bboxMaxY = hasBounds ? maxY : 0;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -716,7 +741,12 @@ export function DxfPreview({
             return entity;
           });
 
-          onEntitiesChange(rotatedEntities, true);
+          if (onRotateWorkspace) {
+            const angleDeg = -alpha * (180 / Math.PI);
+            onRotateWorkspace(rotatedEntities, angleDeg, cx, cy);
+          } else {
+            onEntitiesChange(rotatedEntities, true);
+          }
           setAlignSelectedSegment(null);
         }
       }
@@ -985,15 +1015,15 @@ export function DxfPreview({
                   onDoubleClick={handleDoubleClick}
                   onWheel={handleWheel}
                 >
-                  {outerLayerEnabled && result?.report?.bboxWidthMm != null && result?.report?.bboxHeightMm != null && (
+                  {outerLayerEnabled && hasBounds && (
                     <g className="dimension-overlay" style={{ opacity: 0.6 }}>
-                      <path d={`M ${result.report.bboxMinXMm || 0} ${-(result.report.bboxMaxYMm || 0) - 5} L ${(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm} ${-(result.report.bboxMaxYMm || 0) - 5}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
-                      <text x={(result.report.bboxMinXMm || 0) + result.report.bboxWidthMm / 2} y={-(result.report.bboxMaxYMm || 0) - 7} fill="var(--accent)" fontSize="4" textAnchor="middle" className="tabular-nums">
-                        {result.report.bboxWidthMm.toFixed(2)}
+                      <path d={`M ${bboxMinX} ${-bboxMaxY - 5} L ${bboxMinX + bboxWidth} ${-bboxMaxY - 5}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
+                      <text x={bboxMinX + bboxWidth / 2} y={-bboxMaxY - 7} fill="var(--accent)" fontSize="4" textAnchor="middle" className="tabular-nums">
+                        {bboxWidth.toFixed(2)}
                       </text>
-                      <path d={`M ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0)} L ${(result.report.bboxMinXMm || 0) - 5} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
-                      <text x={(result.report.bboxMinXMm || 0) - 7} y={-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2} fill="var(--accent)" fontSize="4" textAnchor="middle" transform={`rotate(-90 ${(result.report.bboxMinXMm || 0) - 7} ${-(result.report.bboxMaxYMm || 0) + result.report.bboxHeightMm / 2})`} className="tabular-nums">
-                        {result.report.bboxHeightMm.toFixed(2)}
+                      <path d={`M ${bboxMinX - 5} ${-bboxMaxY} L ${bboxMinX - 5} ${-bboxMaxY + bboxHeight}`} stroke="var(--accent)" strokeWidth="0.5" strokeDasharray="2,2" fill="none" />
+                      <text x={bboxMinX - 7} y={-bboxMaxY + bboxHeight / 2} fill="var(--accent)" fontSize="4" textAnchor="middle" transform={`rotate(-90 ${bboxMinX - 7} ${-bboxMaxY + bboxHeight / 2})`} className="tabular-nums">
+                        {bboxHeight.toFixed(2)}
                       </text>
                     </g>
                   )}
