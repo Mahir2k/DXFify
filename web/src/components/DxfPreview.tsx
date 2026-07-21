@@ -156,15 +156,6 @@ export function DxfPreview({
     const camera = cameraRef.current;
     if (!renderer || !scene || !camera) return;
 
-    const rect = canvasRef.current.getBoundingClientRect();
-    renderer.setSize(rect.width, rect.height, false);
-
-    camera.left = viewX;
-    camera.right = viewX + viewWidth;
-    camera.top = -viewY;
-    camera.bottom = -(viewY + viewHeight);
-    camera.updateProjectionMatrix();
-
     while (scene.children.length > 0) {
       const obj = scene.children[0];
       if (obj instanceof THREE.Line) {
@@ -216,7 +207,57 @@ export function DxfPreview({
       }
     });
 
-    renderer.render(scene, camera);
+    const updateSize = () => {
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const canvasWidth = rect.width;
+      const canvasHeight = rect.height;
+      if (canvasWidth === 0 || canvasHeight === 0) return;
+
+      renderer.setSize(canvasWidth, canvasHeight, false);
+
+      const canvasAspect = canvasWidth / canvasHeight;
+      const viewAspect = viewWidth / viewHeight;
+
+      let camLeft = viewX;
+      let camRight = viewX + viewWidth;
+      let camTop = -viewY;
+      let camBottom = -(viewY + viewHeight);
+
+      if (canvasAspect > viewAspect) {
+        const targetWidth = viewHeight * canvasAspect;
+        const padX = (targetWidth - viewWidth) / 2;
+        camLeft = viewX - padX;
+        camRight = viewX + viewWidth + padX;
+      } else {
+        const targetHeight = viewWidth / canvasAspect;
+        const padY = (targetHeight - viewHeight) / 2;
+        camTop = -(viewY - padY);
+        camBottom = -(viewY + viewHeight + padY);
+      }
+
+      camera.left = camLeft;
+      camera.right = camRight;
+      camera.top = camTop;
+      camera.bottom = camBottom;
+      camera.updateProjectionMatrix();
+
+      renderer.render(scene, camera);
+    };
+
+    updateSize();
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateSize();
+    });
+
+    if (canvasRef.current.parentElement) {
+      resizeObserver.observe(canvasRef.current.parentElement);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
   }, [
     entities,
     viewport,
