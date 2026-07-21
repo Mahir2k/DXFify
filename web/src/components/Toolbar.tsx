@@ -15,6 +15,7 @@ const toolMeta: Record<ToolId, { label: string; glyph: string }> = {
   snap: { label: 'Snap', glyph: '⌖' },
   measure: { label: 'Measure Distance', glyph: '📏' },
   brush: { label: 'Proportional Brush', glyph: '🖌' },
+  align: { label: 'Align Parallel', glyph: '⇄' },
   line: { label: 'Line', glyph: '╱' },
   arc: { label: 'Arc / Curve', glyph: '⌒' },
   polyline: { label: 'Polyline', glyph: '⌁' },
@@ -28,7 +29,7 @@ const toolMeta: Record<ToolId, { label: string; glyph: string }> = {
 
 
 const toolGroups: ToolId[][] = [
-  ['select', 'snap', 'measure', 'brush'],
+  ['select', 'snap', 'measure', 'brush', 'align'],
   ['line', 'arc', 'polyline', 'add-point'],
   ['delete', 'delete-point', 'mark-hole'],
   ['undo', 'redo'],

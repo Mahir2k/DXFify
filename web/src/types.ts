@@ -21,7 +21,8 @@ export type ToolId =
   | 'redo'
   | 'measure'
   | 'brush'
-  | 'delete-point';
+  | 'delete-point'
+  | 'align';
 
 export interface ConversionSettings {
   sheetSize: 'a4' | 'a3' | 'a2' | 'a1' | 'a5' | 'letter' | 'legal';

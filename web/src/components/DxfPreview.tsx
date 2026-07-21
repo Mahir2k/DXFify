@@ -76,6 +76,14 @@ export function DxfPreview({
     pointIdx?: number;
   } | null>(null);
 
+  const [alignSelectedSegment, setAlignSelectedSegment] = useState<{
+    entityIdx: number;
+    ptIdx1: number;
+    ptIdx2: number;
+    p1: [number, number];
+    p2: [number, number];
+  } | null>(null);
+
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
@@ -88,6 +96,7 @@ export function DxfPreview({
     setArcStep(0);
     setSnapPoint(null);
     setActiveDrag(null);
+    setAlignSelectedSegment(null);
   }, [selectedTool]);
 
   
@@ -613,6 +622,104 @@ export function DxfPreview({
       }
     } else if (selectedTool === 'add-point') {
       handleAddPointClick(clickCoords);
+    } else if (selectedTool === 'align') {
+      if (!alignSelectedSegment) {
+        let minDistance = Infinity;
+        let closestSegment: {
+          entityIdx: number;
+          ptIdx1: number;
+          ptIdx2: number;
+          p1: [number, number];
+          p2: [number, number];
+        } | null = null;
+
+        entities.forEach((entity, entityIdx) => {
+          if (entity.type === 'polyline' && entity.points && entity.points.length >= 2) {
+            const pts = entity.points;
+            for (let i = 0; i < pts.length - 1; i++) {
+              const d = distToSegment(clickCoords.x, clickCoords.y, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]);
+              if (d < minDistance) {
+                minDistance = d;
+                closestSegment = { entityIdx, ptIdx1: i, ptIdx2: i + 1, p1: pts[i], p2: pts[i+1] };
+              }
+            }
+            if (entity.closed) {
+              const lastIdx = pts.length - 1;
+              const d = distToSegment(clickCoords.x, clickCoords.y, pts[lastIdx][0], pts[lastIdx][1], pts[0][0], pts[0][1]);
+              if (d < minDistance) {
+                minDistance = d;
+                closestSegment = { entityIdx, ptIdx1: lastIdx, ptIdx2: 0, p1: pts[lastIdx], p2: pts[0] };
+              }
+            }
+          }
+        });
+
+        if (closestSegment && minDistance < 15.0) {
+          setAlignSelectedSegment(closestSegment);
+        }
+      } else {
+        const rect = svgRef.current?.getBoundingClientRect();
+        if (rect) {
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+
+          const dLeft = x;
+          const dRight = rect.width - x;
+          const dTop = y;
+          const dBottom = rect.height - y;
+
+          const minDist = Math.min(dLeft, dRight, dTop, dBottom);
+          let targetOrientation: 'horizontal' | 'vertical' = 'horizontal';
+          if (minDist === dLeft || minDist === dRight) {
+            targetOrientation = 'vertical';
+          } else {
+            targetOrientation = 'horizontal';
+          }
+
+          const { p1, p2 } = alignSelectedSegment;
+          const cx = (p1[0] + p2[0]) / 2;
+          const cy = (p1[1] + p2[1]) / 2;
+
+          const theta = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]);
+          let targetTheta = 0;
+          if (targetOrientation === 'horizontal') {
+            targetTheta = Math.round(theta / Math.PI) * Math.PI;
+          } else {
+            targetTheta = Math.round((theta - Math.PI / 2) / Math.PI) * Math.PI + Math.PI / 2;
+          }
+
+          const alpha = targetTheta - theta;
+
+          const rotatePoint = (px: number, py: number): [number, number] => {
+            const dx = px - cx;
+            const dy = py - cy;
+            const rx = cx + dx * Math.cos(alpha) - dy * Math.sin(alpha);
+            const ry = cy + dx * Math.sin(alpha) + dy * Math.cos(alpha);
+            return [rx, ry];
+          };
+
+          const rotatedEntities = entities.map(entity => {
+            if (entity.type === 'circle' && entity.cx != null && entity.cy != null) {
+              const [rx, ry] = rotatePoint(entity.cx, entity.cy);
+              return {
+                ...entity,
+                cx: rx,
+                cy: ry,
+              };
+            } else if (entity.type === 'polyline' && entity.points) {
+              const rPts = entity.points.map(pt => rotatePoint(pt[0], pt[1]));
+              return {
+                ...entity,
+                points: rPts,
+              };
+            }
+            return entity;
+          });
+
+          onEntitiesChange(rotatedEntities, true);
+          setAlignSelectedSegment(null);
+        }
+      }
     }
   };
 
@@ -839,6 +946,7 @@ export function DxfPreview({
                selectedTool === 'measure' ? 'MEASURE TOOL · Drag to measure distance' :
                selectedTool === 'select' ? 'SELECT TOOL · Click & drag nodes to edit geometry' :
                selectedTool === 'brush' ? `BRUSH TOOL · Drag to deform vertices outward (Shape: ${brushShape === 'circle' ? 'Ball' : 'Cube'}, Radius: ${brushRadius}mm)` :
+               selectedTool === 'align' ? (alignSelectedSegment ? 'ALIGN TOOL · Click close to screen edge (top/bottom for horizontal, left/right for vertical)' : 'ALIGN TOOL · Click on a line segment to select it') :
                'MODEL SPACE · mm'}
             </div>
 
@@ -964,6 +1072,19 @@ export function DxfPreview({
                       fill="none"
                       stroke="var(--accent)"
                       strokeWidth="0.4"
+                    />
+                  )}
+
+                  {alignSelectedSegment && (
+                    <line
+                      x1={alignSelectedSegment.p1[0]}
+                      y1={alignSelectedSegment.p1[1]}
+                      x2={alignSelectedSegment.p2[0]}
+                      y2={alignSelectedSegment.p2[1]}
+                      stroke="#ff9f0a"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      opacity="0.85"
                     />
                   )}
 
