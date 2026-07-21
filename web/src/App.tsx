@@ -282,6 +282,7 @@ export default function App() {
   const [conversionResult, setConversionResult] = useState<ConversionResult | null>(null);
   const [report, setReport] = useState<ConversionReport | null>(null);
   const [error, setError] = useState<ConversionErrorDetails | null>(null);
+  const [showRunConfirm, setShowRunConfirm] = useState(false);
 
   
   const [gridEnabled, setGridEnabled] = useState(true);
@@ -513,7 +514,7 @@ export default function App() {
         isConverting={isConverting}
         dxfUrl={conversionResult?.files.dxf ?? null}
         onUpload={handleUpload}
-        onRun={handleConvert}
+        onRun={() => setShowRunConfirm(true)}
         onReset={handleReset}
         selectedTool={selectedTool}
         onToolChange={handleToolChange}
@@ -566,6 +567,114 @@ export default function App() {
         rotationTransforms={rotationTransforms}
         onRotateWorkspace={handleRotateWorkspace}
       />
+
+      {showRunConfirm && (
+        <div className="gimp-modal-overlay" onClick={() => setShowRunConfirm(false)}>
+          <div className="gimp-modal-box" onClick={(e) => e.stopPropagation()}>
+            <div className="gimp-modal-header">
+              <span>Confirm Conversion</span>
+              <button className="gimp-close-btn" onClick={() => setShowRunConfirm(false)}>×</button>
+            </div>
+            <div className="gimp-modal-body">
+              <div className="gimp-preview-section">
+                {originalImageUrl && (
+                  <div className="gimp-thumbnail-container">
+                    <img src={originalImageUrl} alt="Thumbnail" className="gimp-thumbnail" />
+                    <div className="gimp-thumbnail-label">
+                      {uploadedFile?.name || 'Image'}
+                    </div>
+                  </div>
+                )}
+                <div className="gimp-info-text">
+                  Please verify the conversion parameters before vectorizing the image.
+                </div>
+              </div>
+
+              <div className="gimp-settings-section">
+                <div className="gimp-settings-title">Parameters</div>
+                <div className="gimp-settings-grid">
+                  <label>
+                    <span>Sheet size</span>
+                    <select
+                      value={conversionSettings.sheetSize}
+                      onChange={(e) => setConversionSettings({ ...conversionSettings, sheetSize: e.target.value as any })}
+                    >
+                      <option value="a5">A5</option>
+                      <option value="a4">A4</option>
+                      <option value="a3">A3</option>
+                      <option value="a2">A2</option>
+                      <option value="a1">A1</option>
+                      <option value="letter">Letter</option>
+                      <option value="legal">Legal</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Curve Strategy</span>
+                    <select
+                      value={conversionSettings.curveStrategy ?? 'current'}
+                      onChange={(e) => setConversionSettings({ ...conversionSettings, curveStrategy: e.target.value as any })}
+                    >
+                      <option value="current">Current (Douglas-Peucker)</option>
+                      <option value="pratt">Strategy 1 (Pratt Corners)</option>
+                      <option value="spline">Strategy 2 (Cubic Splines)</option>
+                      <option value="gaussian">Strategy 3 (Gaussian Smoothing)</option>
+                      <option value="ransac">Strategy 4 (RANSAC CAD Fillets)</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>Mask threshold</span>
+                    <input
+                      type="number"
+                      min="1" max="255"
+                      value={conversionSettings.maskThreshold ?? 240}
+                      onChange={(e) => setConversionSettings({ ...conversionSettings, maskThreshold: Number(e.target.value) })}
+                    />
+                  </label>
+
+                  <label>
+                    <span>Erosion kernel</span>
+                    <input
+                      type="number"
+                      min="1" max="9" step="2"
+                      value={conversionSettings.erosionKernel ?? 3}
+                      onChange={(e) => setConversionSettings({ ...conversionSettings, erosionKernel: Number(e.target.value) })}
+                    />
+                  </label>
+
+                  <label>
+                    <span>Epsilon min</span>
+                    <input
+                      type="number"
+                      min="0.1" max="5" step="0.1"
+                      value={conversionSettings.epsilonMin ?? 0.5}
+                      onChange={(e) => setConversionSettings({ ...conversionSettings, epsilonMin: Number(e.target.value) })}
+                    />
+                  </label>
+
+                  <label>
+                    <span>Epsilon max</span>
+                    <input
+                      type="number"
+                      min="0.5" max="10" step="0.1"
+                      value={conversionSettings.epsilonMax ?? 2.5}
+                      onChange={(e) => setConversionSettings({ ...conversionSettings, epsilonMax: Number(e.target.value) })}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div className="gimp-modal-footer">
+              <button className="gimp-btn-secondary" onClick={() => setShowRunConfirm(false)}>Cancel</button>
+              <button className="gimp-btn-primary" onClick={() => {
+                setShowRunConfirm(false);
+                handleConvert();
+              }}>Apply / Run</button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
