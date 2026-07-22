@@ -71,10 +71,10 @@ def get_homography(orig_path, paper_w=210.0, paper_h=297.0, *, marker_offset_x=3
             scale = 10.0
             cx, cy = marker_offset_x, marker_offset_y
             pts_dst = np.array([
-                [(paper_w - cx) * scale, (paper_h - cy) * scale],  # ID 0: Bottom-Right
-                [cx * scale,             (paper_h - cy) * scale],  # ID 1: Bottom-Left
-                [cx * scale,             cy * scale],              # ID 2: Top-Left
-                [(paper_w - cx) * scale, cy * scale]               # ID 3: Top-Right
+                [cx * scale, cy * scale],
+                [(paper_w - cx) * scale, cy * scale],
+                [(paper_w - cx) * scale, (paper_h - cy) * scale],
+                [cx * scale, (paper_h - cy) * scale]
             ], dtype=np.float32)
             
             H = cv2.getPerspectiveTransform(pts_src, pts_dst)

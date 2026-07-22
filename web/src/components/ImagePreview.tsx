@@ -187,6 +187,25 @@ export function ImagePreview({
     return solveHomography(src, dst);
   })();
 
+  const homographyH_inv = (() => {
+    if (selectedTab !== 'original' || !markerCenters || !markerCenters['0'] || !markerCenters['1'] || !markerCenters['2'] || !markerCenters['3']) {
+      return null;
+    }
+    const src: [number, number][] = [
+      [0, height],
+      [width, height],
+      [0, 0],
+      [width, 0],
+    ];
+    const dst: [number, number][] = [
+      markerCenters['1'] as [number, number],
+      markerCenters['0'] as [number, number],
+      markerCenters['2'] as [number, number],
+      markerCenters['3'] as [number, number],
+    ];
+    return solveHomography(dst, src);
+  })();
+
   const mapPoint = (px: number, py: number): [number, number] => {
     if (homographyH) {
       return transformHomography(homographyH, px, py);
@@ -264,6 +283,12 @@ export function ImagePreview({
           const dy = py - pivotY;
           px = pivotX + dx * Math.cos(rad) - dy * Math.sin(rad);
           py = pivotY + dx * Math.sin(rad) + dy * Math.cos(rad);
+        }
+
+        if (homographyH_inv) {
+          const [unWarpX, unWarpY] = transformHomography(homographyH_inv, px, py);
+          px = unWarpX;
+          py = unWarpY;
         }
 
         const x_mm = px / scale;
