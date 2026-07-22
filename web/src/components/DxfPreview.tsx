@@ -1395,9 +1395,9 @@ export function DxfPreview({
                       <g transform="scale(1, -1)">
                         {hoveredCoord && (
                           <g transform={`translate(${hoveredCoord.x}, ${hoveredCoord.y})`} style={{ pointerEvents: 'none' }}>
-                            <circle r={Math.max(0.2, viewWidth / 250) * 3} fill="none" stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.4} />
-                            <line x1={-Math.max(0.2, viewWidth / 250) * 6} y1={0} x2={Math.max(0.2, viewWidth / 250) * 6} y2={0} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
-                            <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
+                            <circle r={Math.max(0.2, viewWidth / 250) * 3} fill="none" stroke="#00e676" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.4} />
+                            <line x1={-Math.max(0.2, viewWidth / 250) * 6} y1={0} x2={Math.max(0.2, viewWidth / 250) * 6} y2={0} stroke="#00e676" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
+                            <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke="#00e676" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
                           </g>
                         )}
                         {entities.map((entity, entityIdx) => {
