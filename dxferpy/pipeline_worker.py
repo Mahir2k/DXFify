@@ -664,7 +664,7 @@ def process_region_route():
 
     try:
         paper_w, paper_h = PAPER_SIZES.get(paper_size.lower(), PAPER_SIZES["a4"])
-        img, mask, _ = preprocess_image(input_path, mask_threshold=240)
+        img, mask, _ = segment_single_image(input_path, rembg_session, mask_threshold=240)
         scale = mask.shape[0] / paper_h
         height, width = mask.shape[:2]
 
