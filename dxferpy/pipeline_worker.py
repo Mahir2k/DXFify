@@ -513,9 +513,6 @@ def run_pipeline(
         m3_x, m3_y = int(cx * scale), int((paper_h - cy) * scale)
         for mx, my in [(m0_x, m0_y), (m1_x, m1_y), (m2_x, m2_y), (m3_x, m3_y)]:
             cv2.rectangle(warped_mask, (mx - r, my - r), (mx + r, my + r), 0, -1)
-
-        warped_img = cv2.flip(warped_img, -1)
-        warped_mask = cv2.flip(warped_mask, -1)
     else:
         warped_img = img
         warped_mask = mask

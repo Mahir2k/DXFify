@@ -1294,8 +1294,44 @@ export function DxfPreview({
                         <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
                       </g>
                     )}
-                    {}
-                  {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
+                    {entities.map((entity, entityIdx) => {
+                      const layer = entity.layer;
+                      if (layer === 'HOLES' && !holeLayerEnabled) return null;
+                      if (layer === 'OUTER' && !outerLayerEnabled) return null;
+                      if (layer === 'DETAILS' && !detailsLayerEnabled) return null;
+
+                      const isHole = layer === 'HOLES';
+                      const isDetail = layer === 'DETAILS';
+                      const color = isHole ? '#5b9bd5' : isDetail ? '#10b981' : '#ffffff';
+
+                      if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
+                        return (
+                          <circle
+                            key={`svg-ent-${entityIdx}`}
+                            cx={entity.cx}
+                            cy={entity.cy}
+                            r={entity.r}
+                            fill="none"
+                            stroke={color}
+                            strokeWidth={0.6 * handleScale}
+                          />
+                        );
+                      } else if (entity.type === 'polyline' && entity.points && entity.points.length > 0) {
+                        const d = entity.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ') + (entity.closed ? ' Z' : '');
+                        return (
+                          <path
+                            key={`svg-ent-${entityIdx}`}
+                            d={d}
+                            fill="none"
+                            stroke={color}
+                            strokeWidth={0.6 * handleScale}
+                          />
+                        );
+                      }
+                      return null;
+                    })}
+
+                    {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
                     const layer = entity.layer;
                     if (layer === 'HOLES' && !holeLayerEnabled) return null;
                     if (layer === 'OUTER' && !outerLayerEnabled) return null;
