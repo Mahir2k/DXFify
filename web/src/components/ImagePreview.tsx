@@ -164,19 +164,25 @@ export function ImagePreview({
   }, [activeImage, onImgNaturalSizeChange]);
 
   const scale = result?.report?.pixelsPerMm || 1;
-  const height = naturalSize?.height || 100;
-  const width = naturalSize?.width || 100;
+  const paperW = 210.0;
+  const paperH = 297.0;
+  const height = selectedTab === 'original' ? paperH * scale : (naturalSize?.height || 100);
+  const width = selectedTab === 'original' ? paperW * scale : (naturalSize?.width || 100);
+
+  const markerCx = 32.2;
+  const markerCy = 34.2;
 
   const markerCenters = result?.report?.markerCenters;
+
   const homographyH = (() => {
     if (selectedTab !== 'original' || !markerCenters || !markerCenters['0'] || !markerCenters['1'] || !markerCenters['2'] || !markerCenters['3']) {
       return null;
     }
     const src: [number, number][] = [
-      [0, height],
-      [width, height],
-      [0, 0],
-      [width, 0],
+      [markerCx * scale, (paperH - markerCy) * scale],
+      [(paperW - markerCx) * scale, (paperH - markerCy) * scale],
+      [markerCx * scale, markerCy * scale],
+      [(paperW - markerCx) * scale, markerCy * scale],
     ];
     const dst: [number, number][] = [
       markerCenters['1'] as [number, number],
@@ -192,10 +198,10 @@ export function ImagePreview({
       return null;
     }
     const src: [number, number][] = [
-      [0, height],
-      [width, height],
-      [0, 0],
-      [width, 0],
+      [markerCx * scale, (paperH - markerCy) * scale],
+      [(paperW - markerCx) * scale, (paperH - markerCy) * scale],
+      [markerCx * scale, markerCy * scale],
+      [(paperW - markerCx) * scale, markerCy * scale],
     ];
     const dst: [number, number][] = [
       markerCenters['1'] as [number, number],
