@@ -298,7 +298,7 @@ export function ImagePreview({
         }
 
         const x_mm = px / scale;
-        const y_mm = (height - py) / scale;
+        const y_mm = paperH - (py / scale);
         onHoverCoord({ x: x_mm, y: y_mm });
       }
     }
@@ -452,7 +452,7 @@ export function ImagePreview({
                         for (let i = 0; i < numPts; i++) {
                           const theta = (i * 2 * Math.PI) / numPts;
                           const rx = (entity.cx + entity.r * Math.cos(theta)) * scale;
-                          const ry = height - (entity.cy + entity.r * Math.sin(theta)) * scale;
+                          const ry = (paperH - (entity.cy + entity.r * Math.sin(theta))) * scale;
                           const [mx, my] = mapPoint(rx, ry);
                           pts.push(`${mx.toFixed(2)},${my.toFixed(2)}`);
                         }
@@ -470,7 +470,7 @@ export function ImagePreview({
                         <circle
                           key={idx}
                           cx={entity.cx * scale}
-                          cy={height - entity.cy * scale}
+                          cy={(paperH - entity.cy) * scale}
                           r={entity.r * scale}
                           fill="none"
                           stroke={color}
@@ -480,7 +480,7 @@ export function ImagePreview({
                     } else if (entity.type === 'polyline' && entity.points) {
                       const d = entity.points.map((p, i) => {
                         const px = p[0] * scale;
-                        const py = height - p[1] * scale;
+                        const py = (paperH - p[1]) * scale;
                         const [mx, my] = mapPoint(px, py);
                         return `${i === 0 ? 'M' : 'L'}${mx.toFixed(2)} ${my.toFixed(2)}`;
                       }).join(' ') + (entity.closed ? ' Z' : '');
@@ -497,7 +497,7 @@ export function ImagePreview({
                     return null;
                   })}
                   {hoveredCoord && (() => {
-                    const [hx, hy] = mapPoint(hoveredCoord.x * scale, height - hoveredCoord.y * scale);
+                    const [hx, hy] = mapPoint(hoveredCoord.x * scale, (paperH - hoveredCoord.y) * scale);
                     return (
                       <g transform={`translate(${hx}, ${hy})`} style={{ pointerEvents: 'none' }}>
                         <circle r={6 * (imgW / 400)} fill="none" stroke="#ff9800" strokeWidth={1.5 * (imgW / 400)} />
