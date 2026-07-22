@@ -40,8 +40,8 @@ const toolMeta: Record<ToolId, { label: string; glyph: string }> = {
 
 const toolGroups: ToolId[][] = [
   ['select', 'snap', 'measure', 'brush', 'align', 'subregion-select'],
-  ['line', 'arc', 'polyline', 'spline', 'rect-3pt', 'circle-3pt', 'slot-4pt', 'centerline', 'chamfer', 'fillet', 'add-point'],
-  ['cut', 'fuse', 'delete', 'delete-point', 'mark-hole'],
+  ['line', 'arc', 'polyline', 'spline', 'rect-3pt', 'circle-3pt', 'slot-4pt', 'centerline', 'chamfer', 'fillet'],
+  ['cut', 'fuse', 'add-point', 'delete-point', 'delete', 'mark-hole'],
   ['undo', 'redo'],
 ];
 

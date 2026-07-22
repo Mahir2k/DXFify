@@ -303,6 +303,8 @@ export default function App() {
   const [redoStack, setRedoStack] = useState<Array<{ entities: GeometryEntity[]; rotationTransforms: Array<{ angle: number; cx: number; cy: number }> }>>([]);
 
   
+  const [activeDrawing, setActiveDrawing] = useState<any>(null);
+
   const [brushShape, setBrushShape] = useState<'circle' | 'square'>('circle');
   const [brushRadius, setBrushRadius] = useState<number>(15);
 
@@ -577,6 +579,8 @@ export default function App() {
           setSubRegionBbox(bbox);
           setShowSubRegionModal(true);
         }}
+        activeDrawing={activeDrawing}
+        onActiveDrawingChange={setActiveDrawing}
       />
 
       {showSubRegionModal && subRegionBbox && (

@@ -193,6 +193,7 @@ export function Workspace({
           hoveredCoord={hoveredCoord}
           onHoverCoord={onHoverCoordChange}
           onSubRegionSelect={onSubRegionSelect}
+          onActiveDrawingChange={onActiveDrawingChange}
         />
         <ImagePreview
           result={result}
@@ -208,6 +209,7 @@ export function Workspace({
           rotationTransforms={rotationTransforms}
           hoveredCoord={hoveredCoord}
           onHoverCoord={onHoverCoordChange}
+          activeDrawing={activeDrawing}
         />
       </div>
 

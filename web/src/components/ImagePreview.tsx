@@ -496,6 +496,43 @@ export function ImagePreview({
                     }
                     return null;
                   })}
+                  {activeDrawing && (() => {
+                    const color = '#ff9800';
+                    if (activeDrawing.type === 'circle' && activeDrawing.cx != null && activeDrawing.cy != null && activeDrawing.r != null) {
+                      if (homographyH) {
+                        const numPts = 32;
+                        const pts: string[] = [];
+                        for (let i = 0; i < numPts; i++) {
+                          const theta = (i * 2 * Math.PI) / numPts;
+                          const rx = (activeDrawing.cx + activeDrawing.r * Math.cos(theta)) * scale;
+                          const ry = (paperH - (activeDrawing.cy + activeDrawing.r * Math.sin(theta))) * scale;
+                          const [mx, my] = mapPoint(rx, ry);
+                          pts.push(`${mx.toFixed(2)},${my.toFixed(2)}`);
+                        }
+                        return <polygon points={pts.join(' ')} fill="none" stroke={color} strokeWidth={1.5 * (imgW / 400)} strokeDasharray="3,3" />;
+                      }
+                      return (
+                        <circle
+                          cx={activeDrawing.cx * scale}
+                          cy={(paperH - activeDrawing.cy) * scale}
+                          r={activeDrawing.r * scale}
+                          fill="none"
+                          stroke={color}
+                          strokeWidth={1.5 * (imgW / 400)}
+                          strokeDasharray="3,3"
+                        />
+                      );
+                    } else if (activeDrawing.type === 'polyline' && activeDrawing.points) {
+                      const d = activeDrawing.points.map((p: [number, number], i: number) => {
+                        const px = p[0] * scale;
+                        const py = (paperH - p[1]) * scale;
+                        const [mx, my] = mapPoint(px, py);
+                        return `${i === 0 ? 'M' : 'L'}${mx.toFixed(2)} ${my.toFixed(2)}`;
+                      }).join(' ') + (activeDrawing.closed ? ' Z' : '');
+                      return <path d={d} fill="none" stroke={color} strokeWidth={1.5 * (imgW / 400)} strokeDasharray="3,3" />;
+                    }
+                    return null;
+                  })()}
                   {hoveredCoord && (() => {
                     const [hx, hy] = mapPoint(hoveredCoord.x * scale, (paperH - hoveredCoord.y) * scale);
                     return (

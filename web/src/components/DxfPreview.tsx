@@ -917,6 +917,75 @@ export function DxfPreview({
       }
     } else if (selectedTool === 'add-point') {
       handleAddPointClick(clickCoords);
+    } else if (selectedTool === 'chamfer' || selectedTool === 'fillet') {
+      let bestEntIdx = -1;
+      let bestPtIdx = -1;
+      let minD = 10.0;
+
+      entities.forEach((ent, entIdx) => {
+        if (ent.type === 'polyline' && ent.points && ent.points.length >= 3) {
+          ent.points.forEach((pt, ptIdx) => {
+            const d = Math.hypot(clickCoords.x - pt[0], clickCoords.y - pt[1]);
+            if (d < minD) {
+              minD = d;
+              bestEntIdx = entIdx;
+              bestPtIdx = ptIdx;
+            }
+          });
+        }
+      });
+
+      if (bestEntIdx !== -1 && bestPtIdx !== -1) {
+        const ent = entities[bestEntIdx];
+        if (ent.points) {
+          const pts = ent.points;
+          const n = pts.length;
+          const iPrev = (bestPtIdx - 1 + n) % n;
+          const iNext = (bestPtIdx + 1) % n;
+
+          if (!ent.closed && (bestPtIdx === 0 || bestPtIdx === n - 1)) {
+            return;
+          }
+
+          const Vi = pts[bestPtIdx];
+          const Vprev = pts[iPrev];
+          const Vnext = pts[iNext];
+
+          const lenPrev = Math.hypot(Vprev[0] - Vi[0], Vprev[1] - Vi[1]);
+          const lenNext = Math.hypot(Vnext[0] - Vi[0], Vnext[1] - Vi[1]);
+
+          const trim = Math.min(3.0, lenPrev * 0.4, lenNext * 0.4);
+          if (trim > 0.01) {
+            const p1: [number, number] = [
+              Vi[0] + (trim / lenPrev) * (Vprev[0] - Vi[0]),
+              Vi[1] + (trim / lenPrev) * (Vprev[1] - Vi[1]),
+            ];
+            const p2: [number, number] = [
+              Vi[0] + (trim / lenNext) * (Vnext[0] - Vi[0]),
+              Vi[1] + (trim / lenNext) * (Vnext[1] - Vi[1]),
+            ];
+
+            let replacement: [number, number][] = [];
+            if (selectedTool === 'chamfer') {
+              replacement = [p1, p2];
+            } else {
+              const arcPts: [number, number][] = [];
+              for (let k = 0; k <= 8; k++) {
+                const t = k / 8;
+                const x = (1 - t) ** 2 * p1[0] + 2 * (1 - t) * t * Vi[0] + t ** 2 * p2[0];
+                const y = (1 - t) ** 2 * p1[1] + 2 * (1 - t) * t * Vi[1] + t ** 2 * p2[1];
+                arcPts.push([x, y]);
+              }
+              replacement = arcPts;
+            }
+
+            const newPts = [...pts.slice(0, bestPtIdx), ...replacement, ...pts.slice(bestPtIdx + 1)];
+            const newEntities = [...entities];
+            newEntities[bestEntIdx] = { ...ent, points: newPts };
+            onEntitiesChange(newEntities);
+          }
+        }
+      }
     } else if (selectedTool === 'align') {
       if (!alignSelectedSegment) {
         let minDistance = Infinity;
@@ -1381,10 +1450,10 @@ export function DxfPreview({
                                 <circle
                                   cx={entity.cx}
                                   cy={entity.cy}
-                                  r={1.2 * handleScale}
+                                  r={2.4 * handleScale}
                                   fill="var(--accent)"
                                   stroke="white"
-                                  strokeWidth={0.3 * handleScale}
+                                  strokeWidth={0.4 * handleScale}
                                   style={{ cursor: 'move' }}
                                   onPointerDown={(e) => handleCircleCenterDragStart(e, entityIdx)}
                                   onPointerUp={handleHandlePointerUp}
@@ -1392,10 +1461,10 @@ export function DxfPreview({
                                 <circle
                                   cx={entity.cx + entity.r}
                                   cy={entity.cy}
-                                  r={1.2 * handleScale}
+                                  r={2.4 * handleScale}
                                   fill="#ffcc00"
                                   stroke="white"
-                                  strokeWidth={0.3 * handleScale}
+                                  strokeWidth={0.4 * handleScale}
                                   style={{ cursor: 'ew-resize' }}
                                   onPointerDown={(e) => handleCircleRadiusDragStart(e, entityIdx)}
                                   onPointerUp={handleHandlePointerUp}
@@ -1410,7 +1479,7 @@ export function DxfPreview({
                                     key={ptIdx}
                                     cx={pt[0]}
                                     cy={pt[1]}
-                                    r={1.2 * handleScale}
+                                    r={2.4 * handleScale}
                                     fill={selectedTool === 'delete-point' ? '#ff3b30' : 'var(--accent)'}
                                     stroke="white"
                                     strokeWidth={0.3 * handleScale}
