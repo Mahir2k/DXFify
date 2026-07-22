@@ -50,6 +50,8 @@ interface WorkspaceProps {
   activeDrawing?: any;
   onActiveDrawingChange?: (drawing: any) => void;
   onSubRegionSelect?: (bbox: [number, number, number, number]) => void;
+  activeHoverSource?: 'dxf' | 'image' | null;
+  onHoverSourceChange?: (source: 'dxf' | 'image' | null) => void;
 }
 
 export function Workspace({
@@ -87,6 +89,8 @@ export function Workspace({
   activeDrawing = null,
   onActiveDrawingChange,
   onSubRegionSelect,
+  activeHoverSource = null,
+  onHoverSourceChange,
 }: WorkspaceProps) {
   
   const [toolboxWidth, setToolboxWidth] = useState(72);
@@ -194,6 +198,8 @@ export function Workspace({
           onHoverCoord={onHoverCoordChange}
           onSubRegionSelect={onSubRegionSelect}
           onActiveDrawingChange={onActiveDrawingChange}
+          activeHoverSource={activeHoverSource}
+          onHoverSourceChange={onHoverSourceChange}
         />
         <ImagePreview
           result={result}
@@ -210,6 +216,8 @@ export function Workspace({
           hoveredCoord={hoveredCoord}
           onHoverCoord={onHoverCoordChange}
           activeDrawing={activeDrawing}
+          activeHoverSource={activeHoverSource}
+          onHoverSourceChange={onHoverSourceChange}
         />
       </div>
 

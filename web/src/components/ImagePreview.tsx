@@ -17,6 +17,8 @@ interface ImagePreviewProps {
   hoveredCoord?: { x: number; y: number } | null;
   onHoverCoord?: (coord: { x: number; y: number } | null) => void;
   activeDrawing?: any;
+  activeHoverSource?: 'dxf' | 'image' | null;
+  onHoverSourceChange?: (source: 'dxf' | 'image' | null) => void;
 }
 
 const tabs: Array<{ id: PreviewTab; label: string }> = [
@@ -104,6 +106,8 @@ export function ImagePreview({
   hoveredCoord = null,
   onHoverCoord,
   activeDrawing = null,
+  activeHoverSource = null,
+  onHoverSourceChange,
 }: ImagePreviewProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -300,6 +304,7 @@ export function ImagePreview({
         const x_mm = px / scale;
         const y_mm = paperH - (py / scale);
         onHoverCoord({ x: x_mm, y: y_mm });
+        onHoverSourceChange?.('image');
       }
     }
   };
@@ -309,6 +314,7 @@ export function ImagePreview({
     if (onHoverCoord) {
       onHoverCoord(null);
     }
+    onHoverSourceChange?.(null);
   };
 
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -535,11 +541,12 @@ export function ImagePreview({
                   })()}
                   {hoveredCoord && (() => {
                     const [hx, hy] = mapPoint(hoveredCoord.x * scale, (paperH - hoveredCoord.y) * scale);
+                    const cursorColor = activeHoverSource === 'image' ? '#00e676' : '#ff9800';
                     return (
                       <g transform={`translate(${hx}, ${hy})`} style={{ pointerEvents: 'none' }}>
-                        <circle r={6 * (imgW / 400)} fill="none" stroke="#ff9800" strokeWidth={1.5 * (imgW / 400)} />
-                        <line x1={-12 * (imgW / 400)} y1={0} x2={12 * (imgW / 400)} y2={0} stroke="#ff9800" strokeWidth={1.2 * (imgW / 400)} />
-                        <line x1={0} y1={-12 * (imgW / 400)} x2={0} y2={12 * (imgW / 400)} stroke="#ff9800" strokeWidth={1.2 * (imgW / 400)} />
+                        <circle r={6 * (imgW / 400)} fill="none" stroke={cursorColor} strokeWidth={1.5 * (imgW / 400)} />
+                        <line x1={-12 * (imgW / 400)} y1={0} x2={12 * (imgW / 400)} y2={0} stroke={cursorColor} strokeWidth={1.2 * (imgW / 400)} />
+                        <line x1={0} y1={-12 * (imgW / 400)} x2={0} y2={12 * (imgW / 400)} stroke={cursorColor} strokeWidth={1.2 * (imgW / 400)} />
                       </g>
                     );
                   })()}

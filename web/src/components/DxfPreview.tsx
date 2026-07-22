@@ -28,6 +28,8 @@ interface DxfPreviewProps {
   onHoverCoord?: (coord: { x: number; y: number } | null) => void;
   onActiveDrawingChange?: (drawing: any) => void;
   onSubRegionSelect?: (bbox: [number, number, number, number]) => void;
+  activeHoverSource?: 'dxf' | 'image' | null;
+  onHoverSourceChange?: (source: 'dxf' | 'image' | null) => void;
 }
 
 
@@ -54,6 +56,8 @@ export function DxfPreview({
   onHoverCoord,
   onActiveDrawingChange,
   onSubRegionSelect,
+  activeHoverSource,
+  onHoverSourceChange,
 }: DxfPreviewProps) {
   const [outerLayerEnabled, setOuterLayerEnabled] = useState(true);
   const [holeLayerEnabled, setHoleLayerEnabled] = useState(true);
@@ -1185,6 +1189,9 @@ export function DxfPreview({
         setMeasureEnd(coords);
       }
     }
+    if (rawCoords) {
+      onHoverSourceChange?.('dxf');
+    }
   };
 
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -1212,6 +1219,7 @@ export function DxfPreview({
     if (onHoverCoord) {
       onHoverCoord(null);
     }
+    onHoverSourceChange?.(null);
   };
 
   const handleWheel = (e: React.WheelEvent<SVGSVGElement>) => {
@@ -1393,13 +1401,16 @@ export function DxfPreview({
                     const handleScale = Math.max(0.005, viewWidth / 350);
                     return (
                       <g transform="scale(1, -1)">
-                        {hoveredCoord && (
-                          <g transform={`translate(${hoveredCoord.x}, ${hoveredCoord.y})`} style={{ pointerEvents: 'none' }}>
-                            <circle r={Math.max(0.2, viewWidth / 250) * 3} fill="none" stroke="#00e676" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.4} />
-                            <line x1={-Math.max(0.2, viewWidth / 250) * 6} y1={0} x2={Math.max(0.2, viewWidth / 250) * 6} y2={0} stroke="#00e676" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
-                            <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke="#00e676" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
-                          </g>
-                        )}
+                        {hoveredCoord && (() => {
+                          const cursorColor = activeHoverSource === 'image' ? '#ff9800' : '#00e676';
+                          return (
+                            <g transform={`translate(${hoveredCoord.x}, ${hoveredCoord.y})`} style={{ pointerEvents: 'none' }}>
+                              <circle r={Math.max(0.2, viewWidth / 250) * 3} fill="none" stroke={cursorColor} strokeWidth={Math.max(0.2, viewWidth / 250) * 0.4} />
+                              <line x1={-Math.max(0.2, viewWidth / 250) * 6} y1={0} x2={Math.max(0.2, viewWidth / 250) * 6} y2={0} stroke={cursorColor} strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
+                              <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke={cursorColor} strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
+                            </g>
+                          );
+                        })()}
                         {entities.map((entity, entityIdx) => {
                           const layer = entity.layer;
                           if (layer === 'HOLES' && !holeLayerEnabled) return null;

@@ -304,6 +304,7 @@ export default function App() {
 
   
   const [activeDrawing, setActiveDrawing] = useState<any>(null);
+  const [activeHoverSource, setActiveHoverSource] = useState<'dxf' | 'image' | null>(null);
 
   const [brushShape, setBrushShape] = useState<'circle' | 'square'>('circle');
   const [brushRadius, setBrushRadius] = useState<number>(15);
@@ -581,6 +582,8 @@ export default function App() {
         }}
         activeDrawing={activeDrawing}
         onActiveDrawingChange={setActiveDrawing}
+        activeHoverSource={activeHoverSource}
+        onHoverSourceChange={setActiveHoverSource}
       />
 
       {showSubRegionModal && subRegionBbox && (
