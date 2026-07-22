@@ -47,6 +47,9 @@ interface WorkspaceProps {
   onRotateWorkspace?: (newEntities: GeometryEntity[], angleDeg: number, cx: number, cy: number) => void;
   hoveredCoord?: { x: number; y: number } | null;
   onHoverCoordChange?: (coord: { x: number; y: number } | null) => void;
+  activeDrawing?: any;
+  onActiveDrawingChange?: (drawing: any) => void;
+  onSubRegionSelect?: (bbox: [number, number, number, number]) => void;
 }
 
 export function Workspace({
@@ -81,6 +84,9 @@ export function Workspace({
   onRotateWorkspace,
   hoveredCoord = null,
   onHoverCoordChange,
+  activeDrawing = null,
+  onActiveDrawingChange,
+  onSubRegionSelect,
 }: WorkspaceProps) {
   
   const [toolboxWidth, setToolboxWidth] = useState(72);
@@ -186,6 +192,7 @@ export function Workspace({
           onRotateWorkspace={onRotateWorkspace}
           hoveredCoord={hoveredCoord}
           onHoverCoord={onHoverCoordChange}
+          onSubRegionSelect={onSubRegionSelect}
         />
         <ImagePreview
           result={result}

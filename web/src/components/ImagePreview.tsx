@@ -16,6 +16,7 @@ interface ImagePreviewProps {
   rotationTransforms?: Array<{ angle: number; cx: number; cy: number }>;
   hoveredCoord?: { x: number; y: number } | null;
   onHoverCoord?: (coord: { x: number; y: number } | null) => void;
+  activeDrawing?: any;
 }
 
 const tabs: Array<{ id: PreviewTab; label: string }> = [
@@ -54,6 +55,7 @@ export function ImagePreview({
   rotationTransforms = [],
   hoveredCoord = null,
   onHoverCoord,
+  activeDrawing = null,
 }: ImagePreviewProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -175,8 +177,22 @@ export function ImagePreview({
         pt.x = e.clientX;
         pt.y = e.clientY;
         const transformed = pt.matrixTransform(ctm.inverse());
-        const x_mm = transformed.x / scale;
-        const y_mm = (transformed.y - height) / scale;
+        let px = transformed.x;
+        let py = transformed.y;
+
+        for (let i = rotationTransforms.length - 1; i >= 0; i--) {
+          const t = rotationTransforms[i];
+          const pivotX = t.cx * scale;
+          const pivotY = height - t.cy * scale;
+          const rad = -t.angle * (Math.PI / 180);
+          const dx = px - pivotX;
+          const dy = py - pivotY;
+          px = pivotX + dx * Math.cos(rad) - dy * Math.sin(rad);
+          py = pivotY + dx * Math.sin(rad) + dy * Math.cos(rad);
+        }
+
+        const x_mm = px / scale;
+        const y_mm = (height - py) / scale;
         onHoverCoord({ x: x_mm, y: y_mm });
       }
     }

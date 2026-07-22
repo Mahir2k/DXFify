@@ -284,6 +284,10 @@ export default function App() {
   const [error, setError] = useState<ConversionErrorDetails | null>(null);
   const [showRunConfirm, setShowRunConfirm] = useState(false);
   const [hoveredCoord, setHoveredCoord] = useState<{ x: number; y: number } | null>(null);
+  const [subRegionBbox, setSubRegionBbox] = useState<[number, number, number, number] | null>(null);
+  const [showSubRegionModal, setShowSubRegionModal] = useState(false);
+  const [subRegionStrategy, setSubRegionStrategy] = useState<'current' | 'pratt' | 'spline' | 'gaussian' | 'ransac'>('ransac');
+  const [isProcessingSubRegion, setIsProcessingSubRegion] = useState(false);
 
   
   const [gridEnabled, setGridEnabled] = useState(true);
@@ -569,7 +573,95 @@ export default function App() {
         onRotateWorkspace={handleRotateWorkspace}
         hoveredCoord={hoveredCoord}
         onHoverCoordChange={setHoveredCoord}
+        onSubRegionSelect={(bbox) => {
+          setSubRegionBbox(bbox);
+          setShowSubRegionModal(true);
+        }}
       />
+
+      {showSubRegionModal && subRegionBbox && (
+        <div className="gimp-modal-overlay" onClick={() => setShowSubRegionModal(false)}>
+          <div className="gimp-modal-box" onClick={(e) => e.stopPropagation()}>
+            <div className="gimp-modal-header">
+              <span>Sub-Region Reprocessing</span>
+              <button className="gimp-close-btn" onClick={() => setShowSubRegionModal(false)}>×</button>
+            </div>
+            <div className="gimp-modal-body">
+              <div className="gimp-info-text" style={{ marginBottom: '12px' }}>
+                Re-vectorize selected region <strong>[{subRegionBbox[0].toFixed(1)}, {subRegionBbox[1].toFixed(1)}]</strong> to <strong>[{subRegionBbox[2].toFixed(1)}, {subRegionBbox[3].toFixed(1)}]</strong> mm with a custom strategy.
+              </div>
+              <div className="gimp-settings-grid">
+                <label>
+                  <span>Region Curve Strategy</span>
+                  <select
+                    value={subRegionStrategy}
+                    onChange={(e) => setSubRegionStrategy(e.target.value as any)}
+                  >
+                    <option value="current">Current (Douglas-Peucker)</option>
+                    <option value="pratt">Strategy 1: Pratt Circle Fits</option>
+                    <option value="spline">Strategy 2: Cubic B-Splines</option>
+                    <option value="gaussian">Strategy 3: Gaussian Smoother</option>
+                    <option value="ransac">Strategy 4: RANSAC CAD Fillets</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div className="gimp-modal-footer">
+              <button className="gimp-btn-secondary" onClick={() => setShowSubRegionModal(false)} disabled={isProcessingSubRegion}>
+                Cancel
+              </button>
+              <button
+                className="gimp-btn-primary"
+                disabled={isProcessingSubRegion}
+                onClick={async () => {
+                  if (!conversionResult?.jobId) {
+                    alert('Please run initial image conversion first before selective sub-region reprocessing.');
+                    setShowSubRegionModal(false);
+                    return;
+                  }
+                  setIsProcessingSubRegion(true);
+                  try {
+                    const resp = await fetch('/api/convert-region', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        jobId: conversionResult.jobId,
+                        bbox: subRegionBbox,
+                        curveStrategy: subRegionStrategy,
+                        sheetSize: conversionSettings.sheetSize,
+                      }),
+                    });
+                    const data = await resp.json();
+                    if (data.success && Array.isArray(data.entities)) {
+                      const [minX, minY, maxX, maxY] = subRegionBbox;
+                      const preserved = entities.filter(ent => {
+                        if (ent.type === 'circle' && ent.cx != null && ent.cy != null) {
+                          return !(ent.cx >= minX && ent.cx <= maxX && ent.cy >= minY && ent.cy <= maxY);
+                        } else if (ent.type === 'polyline' && ent.points) {
+                          const allInside = ent.points.every(p => p[0] >= minX && p[0] <= maxX && p[1] >= minY && p[1] <= maxY);
+                          return !allInside;
+                        }
+                        return true;
+                      });
+                      updateEntities([...preserved, ...data.entities]);
+                    } else {
+                      alert(data.message || 'Sub-region re-processing failed.');
+                    }
+                  } catch (err) {
+                    console.error('Sub-region error:', err);
+                  } finally {
+                    setIsProcessingSubRegion(false);
+                    setShowSubRegionModal(false);
+                    setSubRegionBbox(null);
+                  }
+                }}
+              >
+                {isProcessingSubRegion ? 'Processing...' : 'Apply & Replace'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showRunConfirm && (
         <div className="gimp-modal-overlay" onClick={() => setShowRunConfirm(false)}>
@@ -619,28 +711,28 @@ export default function App() {
                       onChange={(e) => setConversionSettings({ ...conversionSettings, curveStrategy: e.target.value as any })}
                     >
                       <option value="current">Current (Douglas-Peucker)</option>
-                      <option value="pratt">Strategy 1 (Pratt Corners)</option>
-                      <option value="spline">Strategy 2 (Cubic Splines)</option>
-                      <option value="gaussian">Strategy 3 (Gaussian Smoothing)</option>
-                      <option value="ransac">Strategy 4 (RANSAC CAD Fillets)</option>
+                      <option value="pratt">Strategy 1: Pratt Circle Fits</option>
+                      <option value="spline">Strategy 2: Cubic B-Splines</option>
+                      <option value="gaussian">Strategy 3: Gaussian Smoother</option>
+                      <option value="ransac">Strategy 4: RANSAC CAD Fillets</option>
                     </select>
                   </label>
 
                   <label>
-                    <span>Mask threshold</span>
+                    <span>Mask Threshold</span>
                     <input
                       type="number"
-                      min="1" max="255"
+                      min="0" max="255"
                       value={conversionSettings.maskThreshold ?? 240}
                       onChange={(e) => setConversionSettings({ ...conversionSettings, maskThreshold: Number(e.target.value) })}
                     />
                   </label>
 
                   <label>
-                    <span>Erosion kernel</span>
+                    <span>Erosion Kernel</span>
                     <input
                       type="number"
-                      min="1" max="9" step="2"
+                      min="1" max="15"
                       value={conversionSettings.erosionKernel ?? 3}
                       onChange={(e) => setConversionSettings({ ...conversionSettings, erosionKernel: Number(e.target.value) })}
                     />

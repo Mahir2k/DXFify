@@ -22,7 +22,22 @@ export type ToolId =
   | 'measure'
   | 'brush'
   | 'delete-point'
-  | 'align';
+  | 'align'
+  | 'subregion-select'
+  | 'rect-3pt'
+  | 'circle-3pt'
+  | 'centerline'
+  | 'slot-4pt'
+  | 'chamfer'
+  | 'fillet'
+  | 'spline'
+  | 'cut'
+  | 'fuse';
+
+export interface SubRegionReprocessRequest {
+  bbox: [number, number, number, number];
+  settings: ConversionSettings;
+}
 
 export interface ConversionSettings {
   sheetSize: 'a4' | 'a3' | 'a2' | 'a1' | 'a5' | 'letter' | 'legal';

@@ -26,6 +26,8 @@ interface DxfPreviewProps {
   onRotateWorkspace?: (newEntities: GeometryEntity[], angleDeg: number, cx: number, cy: number) => void;
   hoveredCoord?: { x: number; y: number } | null;
   onHoverCoord?: (coord: { x: number; y: number } | null) => void;
+  onActiveDrawingChange?: (drawing: any) => void;
+  onSubRegionSelect?: (bbox: [number, number, number, number]) => void;
 }
 
 
@@ -50,6 +52,8 @@ export function DxfPreview({
   onRotateWorkspace,
   hoveredCoord = null,
   onHoverCoord,
+  onActiveDrawingChange,
+  onSubRegionSelect,
 }: DxfPreviewProps) {
   const [outerLayerEnabled, setOuterLayerEnabled] = useState(true);
   const [holeLayerEnabled, setHoleLayerEnabled] = useState(true);
@@ -115,8 +119,13 @@ export function DxfPreview({
 
   const svgRef = useRef<SVGSVGElement>(null);
 
+  const [rect3PtPoints, setRect3PtPoints] = useState<[number, number][]>([]);
+  const [circle3PtPoints, setCircle3PtPoints] = useState<[number, number][]>([]);
+  const [slot4PtPoints, setSlot4PtPoints] = useState<[number, number][]>([]);
+  const [splinePoints, setSplinePoints] = useState<[number, number][]>([]);
+  const [subregionBox, setSubregionBox] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null);
+
   useEffect(() => {
-    
     setMeasureStart(null);
     setMeasureEnd(null);
     setDrawPoints([]);
@@ -126,6 +135,12 @@ export function DxfPreview({
     setSnapPoint(null);
     setActiveDrag(null);
     setAlignSelectedSegment(null);
+    setRect3PtPoints([]);
+    setCircle3PtPoints([]);
+    setSlot4PtPoints([]);
+    setSplinePoints([]);
+    setSubregionBox(null);
+    onActiveDrawingChange?.(null);
   }, [selectedTool]);
 
   
@@ -307,6 +322,37 @@ export function DxfPreview({
     viewWidth,
     viewHeight,
   ]);
+  function computeCircumcircle(p1: [number, number], p2: [number, number], p3: [number, number]) {
+    const d = 2 * (p1[0] * (p2[1] - p3[1]) + p2[0] * (p3[1] - p1[1]) + p3[0] * (p1[1] - p2[1]));
+    if (Math.abs(d) < 1e-6) return null;
+    const p1_sq = p1[0] * p1[0] + p1[1] * p1[1];
+    const p2_sq = p2[0] * p2[0] + p2[1] * p2[1];
+    const p3_sq = p3[0] * p3[0] + p3[1] * p3[1];
+    const cx = (p1_sq * (p2[1] - p3[1]) + p2_sq * (p3[1] - p1[1]) + p3_sq * (p1[1] - p2[1])) / d;
+    const cy = (p1_sq * (p3[0] - p2[0]) + p2_sq * (p1[0] - p3[0]) + p3_sq * (p2[0] - p1[0])) / d;
+    const r = Math.hypot(p1[0] - cx, p1[1] - cy);
+    return { cx, cy, r };
+  }
+
+  function evaluateSplinePoints(pts: [number, number][], numPerSeg = 10): [number, number][] {
+    if (pts.length < 2) return pts;
+    if (pts.length === 2) return pts;
+    const res: [number, number][] = [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(0, i - 1)];
+      const p1 = pts[i];
+      const p2 = pts[i + 1];
+      const p3 = pts[Math.min(pts.length - 1, i + 2)];
+      for (let t = 0; t <= 1; t += 1 / numPerSeg) {
+        const t2 = t * t;
+        const t3 = t2 * t;
+        const x = 0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3);
+        const y = 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[0] + p3[0]) * t3);
+        res.push([x, y]);
+      }
+    }
+    return res;
+  }
 
   const getModelCoords = (clientX: number, clientY: number): { x: number; y: number } | null => {
     if (!svgRef.current) return null;
@@ -404,7 +450,8 @@ export function DxfPreview({
     const coords = getModelCoords(clientX, clientY);
     if (!coords) return null;
 
-    const snapRadius = 6.0; 
+    const handleScale = Math.max(0.05, viewWidth / 400);
+    const snapRadius = Math.max(1.5 * handleScale, 2.0); 
     let bestPt = coords;
     let minD = snapRadius;
 
@@ -595,7 +642,9 @@ export function DxfPreview({
       e.currentTarget.setPointerCapture(e.pointerId);
     } else if (selectedTool === 'line') {
       if (drawPoints.length === 0) {
-        setDrawPoints([[clickCoords.x, clickCoords.y]]);
+        const pts: [number, number][] = [[clickCoords.x, clickCoords.y]];
+        setDrawPoints(pts);
+        onActiveDrawingChange?.({ type: 'polyline', points: pts });
       } else {
         onEntitiesChange([...entities, {
           type: 'polyline',
@@ -604,9 +653,187 @@ export function DxfPreview({
           closed: false
         }]);
         setDrawPoints([]);
+        onActiveDrawingChange?.(null);
       }
     } else if (selectedTool === 'polyline') {
-      setDrawPoints([...drawPoints, [clickCoords.x, clickCoords.y]]);
+      const nextPts: [number, number][] = [...drawPoints, [clickCoords.x, clickCoords.y]];
+      setDrawPoints(nextPts);
+      onActiveDrawingChange?.({ type: 'polyline', points: nextPts });
+    } else if (selectedTool === 'spline') {
+      const nextPts: [number, number][] = [...splinePoints, [clickCoords.x, clickCoords.y]];
+      setSplinePoints(nextPts);
+      onActiveDrawingChange?.({ type: 'polyline', points: evaluateSplinePoints(nextPts) });
+    } else if (selectedTool === 'rect-3pt') {
+      if (rect3PtPoints.length === 0) {
+        setRect3PtPoints([[clickCoords.x, clickCoords.y]]);
+      } else if (rect3PtPoints.length === 1) {
+        setRect3PtPoints([rect3PtPoints[0], [clickCoords.x, clickCoords.y]]);
+      } else if (rect3PtPoints.length === 2) {
+        const p1 = rect3PtPoints[0];
+        const p2 = rect3PtPoints[1];
+        const p3: [number, number] = [clickCoords.x, clickCoords.y];
+        const dx = p2[0] - p1[0];
+        const dy = p2[1] - p1[1];
+        const len = Math.hypot(dx, dy);
+        if (len > 0.001) {
+          const nx = -dy / len;
+          const ny = dx / len;
+          const h = (p3[0] - p1[0]) * nx + (p3[1] - p1[1]) * ny;
+          const p4: [number, number] = [p2[0] + h * nx, p2[1] + h * ny];
+          const p5: [number, number] = [p1[0] + h * nx, p1[1] + h * ny];
+          onEntitiesChange([...entities, {
+            type: 'polyline',
+            layer: 'OUTER',
+            points: [p1, p2, p4, p5],
+            closed: true,
+          }]);
+        }
+        setRect3PtPoints([]);
+        onActiveDrawingChange?.(null);
+      }
+    } else if (selectedTool === 'circle-3pt') {
+      if (circle3PtPoints.length < 2) {
+        setCircle3PtPoints([...circle3PtPoints, [clickCoords.x, clickCoords.y]]);
+      } else {
+        const circle = computeCircumcircle(circle3PtPoints[0], circle3PtPoints[1], [clickCoords.x, clickCoords.y]);
+        if (circle) {
+          onEntitiesChange([...entities, {
+            type: 'circle',
+            layer: 'OUTER',
+            cx: circle.cx,
+            cy: circle.cy,
+            r: circle.r,
+          }]);
+        }
+        setCircle3PtPoints([]);
+        onActiveDrawingChange?.(null);
+      }
+    } else if (selectedTool === 'slot-4pt') {
+      if (slot4PtPoints.length < 2) {
+        setSlot4PtPoints([...slot4PtPoints, [clickCoords.x, clickCoords.y]]);
+      } else {
+        const p1 = slot4PtPoints[0];
+        const p2 = slot4PtPoints[1];
+        const p3: [number, number] = [clickCoords.x, clickCoords.y];
+        const dx = p2[0] - p1[0];
+        const dy = p2[1] - p1[1];
+        const len = Math.hypot(dx, dy);
+        if (len > 0.001) {
+          const nx = -dy / len;
+          const ny = dx / len;
+          const r = Math.abs((p3[0] - p1[0]) * nx + (p3[1] - p1[1]) * ny);
+          const pts: [number, number][] = [];
+          for (let i = 0; i <= 8; i++) {
+            const ang = (Math.PI / 2) + (i / 8) * Math.PI;
+            const ax = Math.atan2(dy, dx);
+            pts.push([p2[0] + r * Math.cos(ax + ang), p2[1] + r * Math.sin(ax + ang)]);
+          }
+          for (let i = 0; i <= 8; i++) {
+            const ang = (3 * Math.PI / 2) + (i / 8) * Math.PI;
+            const ax = Math.atan2(dy, dx);
+            pts.push([p1[0] + r * Math.cos(ax + ang), p1[1] + r * Math.sin(ax + ang)]);
+          }
+          onEntitiesChange([...entities, {
+            type: 'polyline',
+            layer: 'OUTER',
+            points: pts,
+            closed: true,
+          }]);
+        }
+        setSlot4PtPoints([]);
+        onActiveDrawingChange?.(null);
+      }
+    } else if (selectedTool === 'centerline') {
+      const closest = findClosestEntity(clickCoords);
+      if (closest.index !== -1 && closest.dist < 10.0) {
+        const target = entities[closest.index];
+        if (target.type === 'circle' && target.cx != null && target.cy != null && target.r != null) {
+          const rExt = target.r * 1.25;
+          onEntitiesChange([
+            ...entities,
+            { type: 'polyline', layer: 'DETAILS', points: [[target.cx - rExt, target.cy], [target.cx + rExt, target.cy]], closed: false },
+            { type: 'polyline', layer: 'DETAILS', points: [[target.cx, target.cy - rExt], [target.cx, target.cy + rExt]], closed: false },
+          ]);
+        }
+      }
+    } else if (selectedTool === 'cut') {
+      let bestEntIdx = -1;
+      let bestSegIdx = -1;
+      let minD = 10.0;
+      let cutPt: [number, number] = [clickCoords.x, clickCoords.y];
+
+      entities.forEach((ent, idx) => {
+        if (ent.type === 'polyline' && ent.points && ent.points.length >= 2) {
+          for (let i = 0; i < ent.points.length - 1; i++) {
+            const p1 = ent.points[i];
+            const p2 = ent.points[i + 1];
+            const d = distToSegment(clickCoords.x, clickCoords.y, p1[0], p1[1], p2[0], p2[1]);
+            if (d < minD) {
+              minD = d;
+              bestEntIdx = idx;
+              bestSegIdx = i;
+            }
+          }
+        }
+      });
+
+      if (bestEntIdx !== -1 && bestSegIdx !== -1) {
+        const ent = entities[bestEntIdx];
+        if (ent.points) {
+          const poly1 = ent.points.slice(0, bestSegIdx + 1);
+          poly1.push(cutPt);
+          const poly2 = [cutPt, ...ent.points.slice(bestSegIdx + 1)];
+          const newEnts = entities.filter((_, i) => i !== bestEntIdx);
+          newEnts.push({ ...ent, points: poly1, closed: false });
+          newEnts.push({ ...ent, points: poly2, closed: false });
+          onEntitiesChange(newEnts);
+        }
+      }
+    } else if (selectedTool === 'fuse') {
+      let closestPts: Array<{ entIdx: number; ptIdx: number; pt: [number, number]; dist: number }> = [];
+      entities.forEach((ent, entIdx) => {
+        if (ent.type === 'polyline' && ent.points) {
+          ent.points.forEach((pt, ptIdx) => {
+            const d = Math.hypot(clickCoords.x - pt[0], clickCoords.y - pt[1]);
+            if (d < 15.0) {
+              closestPts.push({ entIdx, ptIdx, pt, dist: d });
+            }
+          });
+        }
+      });
+      closestPts.sort((a, b) => a.dist - b.dist);
+      if (closestPts.length >= 2) {
+        const p1 = closestPts[0];
+        const p2 = closestPts[1];
+        const mid: [number, number] = [(p1.pt[0] + p2.pt[0]) / 2, (p1.pt[1] + p2.pt[1]) / 2];
+        const newEntities = [...entities];
+        if (p1.entIdx === p2.entIdx) {
+          const ent = { ...newEntities[p1.entIdx] };
+          if (ent.points) {
+            const pts = [...ent.points];
+            pts[p1.ptIdx] = mid;
+            pts[p2.ptIdx] = mid;
+            ent.points = pts;
+            newEntities[p1.entIdx] = ent;
+          }
+        } else {
+          const e1 = newEntities[p1.entIdx];
+          const e2 = newEntities[p2.entIdx];
+          if (e1.type === 'polyline' && e2.type === 'polyline' && e1.points && e2.points) {
+            const pts1 = [...e1.points];
+            const pts2 = [...e2.points];
+            pts1[p1.ptIdx] = mid;
+            pts2[p2.ptIdx] = mid;
+            newEntities[p1.entIdx] = { ...e1, points: pts1 };
+            newEntities[p2.entIdx] = { ...e2, points: pts2 };
+          }
+        }
+        onEntitiesChange(newEntities);
+      }
+    } else if (selectedTool === 'subregion-select') {
+      setSubregionBox({ start: clickCoords, end: clickCoords });
+      setIsDragging(true);
+      e.currentTarget.setPointerCapture(e.pointerId);
     } else if (selectedTool === 'arc') {
       if (arcStep === 0) {
         setArcStart(clickCoords);
@@ -633,6 +860,7 @@ export function DxfPreview({
         setArcStart(null);
         setArcEnd(null);
         setArcStep(0);
+        onActiveDrawingChange?.(null);
       }
     } else if (selectedTool === 'delete') {
       const closest = findClosestEntity(clickCoords);
@@ -816,6 +1044,11 @@ export function DxfPreview({
       return;
     }
     
+    if (selectedTool === 'subregion-select' && isDragging && subregionBox && rawCoords) {
+      setSubregionBox({ start: subregionBox.start, end: rawCoords });
+      return;
+    }
+    
     if (selectedTool === 'select') {
       const dx = e.clientX - lastPos.x;
       const dy = e.clientY - lastPos.y;
@@ -848,6 +1081,16 @@ export function DxfPreview({
   };
 
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (selectedTool === 'subregion-select' && subregionBox) {
+      const minX = Math.min(subregionBox.start.x, subregionBox.end.x);
+      const maxX = Math.max(subregionBox.start.x, subregionBox.end.x);
+      const minY = Math.min(subregionBox.start.y, subregionBox.end.y);
+      const maxY = Math.max(subregionBox.start.y, subregionBox.end.y);
+      if (maxX - minX > 1.0 && maxY - minY > 1.0) {
+        onSubRegionSelect?.([minX, minY, maxX, maxY]);
+      }
+      setSubregionBox(null);
+    }
     setIsDragging(false);
     e.currentTarget.releasePointerCapture(e.pointerId);
     if (selectedTool === 'brush') {
@@ -1040,9 +1283,12 @@ export function DxfPreview({
                     </g>
                   )}
 
-                  <g transform="scale(1, -1)">
-                    {hoveredCoord && (
-                      <g transform={`translate(${hoveredCoord.x}, ${hoveredCoord.y})`} style={{ pointerEvents: 'none' }}>
+                  {(() => {
+                    const handleScale = Math.max(0.05, viewWidth / 400);
+                    return (
+                      <g transform="scale(1, -1)">
+                        {hoveredCoord && (
+                          <g transform={`translate(${hoveredCoord.x}, ${hoveredCoord.y})`} style={{ pointerEvents: 'none' }}>
                         <circle r={Math.max(0.2, viewWidth / 250) * 3} fill="none" stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.4} />
                         <line x1={-Math.max(0.2, viewWidth / 250) * 6} y1={0} x2={Math.max(0.2, viewWidth / 250) * 6} y2={0} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
                         <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
@@ -1167,8 +1413,7 @@ export function DxfPreview({
                       points={drawPoints.map(p => `${p[0]},${p[1]}`).join(' ')}
                       fill="none"
                       stroke="var(--accent)"
-                      strokeWidth="0.6"
-                      strokeDasharray="2,2"
+                      strokeWidth={0.8 * handleScale}
                     />
                   )}
                   {drawPoints.length > 0 && cursorMm && (
@@ -1178,8 +1423,82 @@ export function DxfPreview({
                       x2={cursorMm.x}
                       y2={cursorMm.y}
                       stroke="var(--accent)"
-                      strokeWidth="0.5"
-                      strokeDasharray="2,2"
+                      strokeWidth={0.8 * handleScale}
+                    />
+                  )}
+
+                  {rect3PtPoints.length === 1 && cursorMm && (
+                    <line
+                      x1={rect3PtPoints[0][0]}
+                      y1={rect3PtPoints[0][1]}
+                      x2={cursorMm.x}
+                      y2={cursorMm.y}
+                      stroke="var(--accent)"
+                      strokeWidth={0.8 * handleScale}
+                    />
+                  )}
+                  {rect3PtPoints.length === 2 && cursorMm && (
+                    <path
+                      d={(() => {
+                        const p1 = rect3PtPoints[0];
+                        const p2 = rect3PtPoints[1];
+                        const dx = p2[0] - p1[0];
+                        const dy = p2[1] - p1[1];
+                        const len = Math.hypot(dx, dy);
+                        if (len < 0.001) return '';
+                        const nx = -dy / len;
+                        const ny = dx / len;
+                        const h = (cursorMm.x - p1[0]) * nx + (cursorMm.y - p1[1]) * ny;
+                        const p4 = [p2[0] + h * nx, p2[1] + h * ny];
+                        const p5 = [p1[0] + h * nx, p1[1] + h * ny];
+                        return `M ${p1[0]} ${p1[1]} L ${p2[0]} ${p2[1]} L ${p4[0]} ${p4[1]} L ${p5[0]} ${p5[1]} Z`;
+                      })()}
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeWidth={0.8 * handleScale}
+                    />
+                  )}
+
+                  {circle3PtPoints.length > 0 && (
+                    <polyline
+                      points={circle3PtPoints.map(p => `${p[0]},${p[1]}`).join(' ')}
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeWidth={0.8 * handleScale}
+                    />
+                  )}
+                  {circle3PtPoints.length === 2 && cursorMm && (
+                    <path
+                      d={(() => {
+                        const circle = computeCircumcircle(circle3PtPoints[0], circle3PtPoints[1], [cursorMm.x, cursorMm.y]);
+                        if (!circle) return '';
+                        return `M ${circle.cx + circle.r} ${circle.cy} A ${circle.r} ${circle.r} 0 1 0 ${circle.cx - circle.r} ${circle.cy} A ${circle.r} ${circle.r} 0 1 0 ${circle.cx + circle.r} ${circle.cy}`;
+                      })()}
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeWidth={0.8 * handleScale}
+                    />
+                  )}
+
+                  {splinePoints.length > 0 && (
+                    <polyline
+                      points={evaluateSplinePoints(cursorMm ? [...splinePoints, [cursorMm.x, cursorMm.y]] : splinePoints).map(p => `${p[0]},${p[1]}`).join(' ')}
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeWidth={0.8 * handleScale}
+                    />
+                  )}
+
+                  {subregionBox && (
+                    <rect
+                      x={Math.min(subregionBox.start.x, subregionBox.end.x)}
+                      y={Math.min(subregionBox.start.y, subregionBox.end.y)}
+                      width={Math.abs(subregionBox.end.x - subregionBox.start.x)}
+                      height={Math.abs(subregionBox.end.y - subregionBox.start.y)}
+                      fill="rgba(255, 152, 0, 0.15)"
+                      stroke="#ff9800"
+                      strokeWidth={1.2 * handleScale}
+                      strokeDasharray="4,4"
                     />
                   )}
 
@@ -1255,7 +1574,9 @@ export function DxfPreview({
                     </g>
                   )}
                 </g>
-              </svg>
+                    );
+                  })()}
+                </svg>
             </div>
           ) : result ? (
               <div className="empty-state">

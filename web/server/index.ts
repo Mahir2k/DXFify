@@ -359,6 +359,49 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
   }
 });
 
+app.post('/api/convert-region', async (req, res) => {
+  const { jobId, bbox, curveStrategy, sheetSize } = req.body;
+  if (!jobId || !bbox) {
+    return res.status(400).json({ success: false, message: 'jobId and bbox are required.' });
+  }
+
+  const jobFolder = jobFolderFor(jobId);
+  if (!jobFolder || !existsSync(jobFolder)) {
+    return res.status(404).json({ success: false, message: 'Job not found.' });
+  }
+
+  const filesInJob = await readdir(jobFolder);
+  const uploadedName = filesInJob.find((f: string) => f.startsWith('uploaded-'));
+  if (!uploadedName) {
+    return res.status(404).json({ success: false, message: 'Source image not found for job.' });
+  }
+
+  const inputPath = path.join(jobFolder, uploadedName);
+  try {
+    const url = `${workerUrl}/process_region`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inputPath,
+        outputDir: jobFolder,
+        bbox,
+        paperSize: sheetSize || 'a4',
+        curveStrategy: curveStrategy || 'current',
+      }),
+    });
+
+    const body = await resp.json() as { success: boolean; entities?: unknown; message?: string };
+    if (!resp.ok || !body.success) {
+      return res.status(500).json({ success: false, message: body.message || 'Sub-region processing failed.' });
+    }
+    return res.json({ success: true, entities: body.entities });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Sub-region processing error';
+    return res.status(500).json({ success: false, message });
+  }
+});
+
 app.get('/api/jobs/:jobId/:filename', (req, res) => {
   const { jobId, filename } = req.params;
   const filePath = jobFile(jobId, filename);

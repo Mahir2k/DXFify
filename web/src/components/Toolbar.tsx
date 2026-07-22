@@ -16,10 +16,20 @@ const toolMeta: Record<ToolId, { label: string; glyph: string }> = {
   measure: { label: 'Measure Distance', glyph: '📏' },
   brush: { label: 'Proportional Brush', glyph: '🖌' },
   align: { label: 'Align Parallel', glyph: '⇄' },
+  'subregion-select': { label: 'Sub-Region Reprocess Area', glyph: '⬚' },
   line: { label: 'Line', glyph: '╱' },
-  arc: { label: 'Arc / Curve', glyph: '⌒' },
+  arc: { label: '3-Point Arc', glyph: '⌒' },
   polyline: { label: 'Polyline', glyph: '⌁' },
+  spline: { label: 'B-Spline', glyph: '∿' },
+  'rect-3pt': { label: '3-Point Rectangle', glyph: '▭' },
+  'circle-3pt': { label: '3-Point Circle', glyph: '◯' },
+  'slot-4pt': { label: '4-Point Slot', glyph: '🕳' },
+  centerline: { label: 'Centerlines', glyph: '┼' },
+  chamfer: { label: 'Sketch Chamfer', glyph: '⎎' },
+  fillet: { label: 'Sketch Fillet', glyph: '╭' },
   'add-point': { label: 'Add Point', glyph: '+' },
+  cut: { label: 'Scissors Cut Line', glyph: '✂' },
+  fuse: { label: 'Fuse / Merge Vertices', glyph: '🔗' },
   delete: { label: 'Delete Element', glyph: '⌫' },
   'delete-point': { label: 'Delete Point', glyph: '−' },
   'mark-hole': { label: 'Mark Hole', glyph: '○' },
@@ -29,9 +39,9 @@ const toolMeta: Record<ToolId, { label: string; glyph: string }> = {
 
 
 const toolGroups: ToolId[][] = [
-  ['select', 'snap', 'measure', 'brush', 'align'],
-  ['line', 'arc', 'polyline', 'add-point'],
-  ['delete', 'delete-point', 'mark-hole'],
+  ['select', 'snap', 'measure', 'brush', 'align', 'subregion-select'],
+  ['line', 'arc', 'polyline', 'spline', 'rect-3pt', 'circle-3pt', 'slot-4pt', 'centerline', 'chamfer', 'fillet', 'add-point'],
+  ['cut', 'fuse', 'delete', 'delete-point', 'mark-hole'],
   ['undo', 'redo'],
 ];
 
