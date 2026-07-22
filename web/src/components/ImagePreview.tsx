@@ -385,7 +385,7 @@ export function ImagePreview({
               <svg
                 ref={svgRef}
                 viewBox={`${imgX} ${imgY} ${imgW} ${imgH}`}
-                style={{ width: '100%', height: '100%', cursor: isDragging ? 'grabbing' : 'grab' }}
+                style={{ width: '100%', height: '100%', cursor: isDragging ? 'grabbing' : hoveredCoord ? 'none' : 'grab' }}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}

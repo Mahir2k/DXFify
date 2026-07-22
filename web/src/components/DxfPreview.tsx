@@ -1261,7 +1261,7 @@ export function DxfPreview({
                     width: '100%',
                     height: '100%',
                     background: 'transparent',
-                    cursor: selectedTool === 'select' ? (activeDrag ? 'move' : isDragging ? 'grabbing' : 'grab') : selectedTool === 'measure' ? 'crosshair' : selectedTool === 'brush' ? 'pointer' : 'default'
+                    cursor: isDragging ? 'grabbing' : activeDrag ? 'move' : hoveredCoord ? 'none' : 'crosshair'
                   }}
                   onPointerDown={handlePointerDown}
                   onPointerMove={handlePointerMove}
