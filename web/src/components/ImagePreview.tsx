@@ -41,6 +41,54 @@ function filenameFromUrl(url: string) {
   return decodeURIComponent(url.split('/').pop() ?? url);
 }
 
+function solveHomography(src: [number, number][], dst: [number, number][]): number[] | null {
+  const A: number[][] = [];
+  const B: number[] = [];
+  for (let i = 0; i < 4; i++) {
+    const [x, y] = src[i];
+    const [u, v] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -x * u, -y * u]);
+    B.push(u);
+    A.push([0, 0, 0, x, y, 1, -x * v, -y * v]);
+    B.push(v);
+  }
+  for (let i = 0; i < 8; i++) {
+    let maxRow = i;
+    for (let k = i + 1; k < 8; k++) {
+      if (Math.abs(A[k][i]) > Math.abs(A[maxRow][i])) maxRow = k;
+    }
+    [A[i], A[maxRow]] = [A[maxRow], A[i]];
+    [B[i], B[maxRow]] = [B[maxRow], B[i]];
+    if (Math.abs(A[i][i]) < 1e-8) return null;
+    for (let k = i + 1; k < 8; k++) {
+      const c = -A[k][i] / A[i][i];
+      for (let j = i; j < 8; j++) {
+        if (i === j) A[k][j] = 0;
+        else A[k][j] += c * A[i][j];
+      }
+      B[k] += c * B[i];
+    }
+  }
+  const H = new Array(9);
+  H[8] = 1;
+  for (let i = 7; i >= 0; i--) {
+    let sum = B[i];
+    for (let j = i + 1; j < 8; j++) {
+      sum -= A[i][j] * H[j];
+    }
+    H[i] = sum / A[i][i];
+  }
+  return H;
+}
+
+function transformHomography(H: number[], x: number, y: number): [number, number] {
+  const w = H[6] * x + H[7] * y + H[8];
+  if (Math.abs(w) < 1e-6) return [x, y];
+  const u = (H[0] * x + H[1] * y + H[2]) / w;
+  const v = (H[3] * x + H[4] * y + H[5]) / w;
+  return [u, v];
+}
+
 export function ImagePreview({
   result,
   originalImageUrl,
@@ -118,6 +166,33 @@ export function ImagePreview({
   const scale = result?.report?.pixelsPerMm || 1;
   const height = naturalSize?.height || 100;
   const width = naturalSize?.width || 100;
+
+  const markerCenters = result?.report?.markerCenters;
+  const homographyH = (() => {
+    if (selectedTab !== 'original' || !markerCenters || !markerCenters['0'] || !markerCenters['1'] || !markerCenters['2'] || !markerCenters['3']) {
+      return null;
+    }
+    const src: [number, number][] = [
+      [0, height],
+      [width, height],
+      [0, 0],
+      [width, 0],
+    ];
+    const dst: [number, number][] = [
+      markerCenters['1'] as [number, number],
+      markerCenters['0'] as [number, number],
+      markerCenters['2'] as [number, number],
+      markerCenters['3'] as [number, number],
+    ];
+    return solveHomography(src, dst);
+  })();
+
+  const mapPoint = (px: number, py: number): [number, number] => {
+    if (homographyH) {
+      return transformHomography(homographyH, px, py);
+    }
+    return [px, py];
+  };
 
   const activeViewport = viewport || {
     x: 0,
@@ -340,6 +415,26 @@ export function ImagePreview({
                     const isHole = entity.layer === 'HOLES';
                     const color = isHole ? '#ff3b30' : '#00e5ff';
                     if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
+                      if (homographyH) {
+                        const numPts = 32;
+                        const pts: string[] = [];
+                        for (let i = 0; i < numPts; i++) {
+                          const theta = (i * 2 * Math.PI) / numPts;
+                          const rx = (entity.cx + entity.r * Math.cos(theta)) * scale;
+                          const ry = height - (entity.cy + entity.r * Math.sin(theta)) * scale;
+                          const [mx, my] = mapPoint(rx, ry);
+                          pts.push(`${mx.toFixed(2)},${my.toFixed(2)}`);
+                        }
+                        return (
+                          <polygon
+                            key={idx}
+                            points={pts.join(' ')}
+                            fill="none"
+                            stroke={color}
+                            strokeWidth={1.2 * (imgW / 400)}
+                          />
+                        );
+                      }
                       return (
                         <circle
                           key={idx}
@@ -355,7 +450,8 @@ export function ImagePreview({
                       const d = entity.points.map((p, i) => {
                         const px = p[0] * scale;
                         const py = height - p[1] * scale;
-                        return `${i === 0 ? 'M' : 'L'}${px} ${py}`;
+                        const [mx, my] = mapPoint(px, py);
+                        return `${i === 0 ? 'M' : 'L'}${mx.toFixed(2)} ${my.toFixed(2)}`;
                       }).join(' ') + (entity.closed ? ' Z' : '');
                       return (
                         <path
@@ -369,13 +465,16 @@ export function ImagePreview({
                     }
                     return null;
                   })}
-                  {hoveredCoord && (
-                    <g transform={`translate(${hoveredCoord.x * scale}, ${height - hoveredCoord.y * scale})`} style={{ pointerEvents: 'none' }}>
-                      <circle r={6 * (imgW / 400)} fill="none" stroke="#ff9800" strokeWidth={1.5 * (imgW / 400)} />
-                      <line x1={-12 * (imgW / 400)} y1={0} x2={12 * (imgW / 400)} y2={0} stroke="#ff9800" strokeWidth={1.2 * (imgW / 400)} />
-                      <line x1={0} y1={-12 * (imgW / 400)} x2={0} y2={12 * (imgW / 400)} stroke="#ff9800" strokeWidth={1.2 * (imgW / 400)} />
-                    </g>
-                  )}
+                  {hoveredCoord && (() => {
+                    const [hx, hy] = mapPoint(hoveredCoord.x * scale, height - hoveredCoord.y * scale);
+                    return (
+                      <g transform={`translate(${hx}, ${hy})`} style={{ pointerEvents: 'none' }}>
+                        <circle r={6 * (imgW / 400)} fill="none" stroke="#ff9800" strokeWidth={1.5 * (imgW / 400)} />
+                        <line x1={-12 * (imgW / 400)} y1={0} x2={12 * (imgW / 400)} y2={0} stroke="#ff9800" strokeWidth={1.2 * (imgW / 400)} />
+                        <line x1={0} y1={-12 * (imgW / 400)} x2={0} y2={12 * (imgW / 400)} stroke="#ff9800" strokeWidth={1.2 * (imgW / 400)} />
+                      </g>
+                    );
+                  })()}
                 </g>
               </svg>
             </div>
