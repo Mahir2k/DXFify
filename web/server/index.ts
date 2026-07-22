@@ -121,6 +121,8 @@ function enqueue<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 const upload = multer({
   dest: incomingRoot,
   limits: {
