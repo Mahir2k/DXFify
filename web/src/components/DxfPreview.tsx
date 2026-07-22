@@ -724,12 +724,12 @@ export function DxfPreview({
           const r = Math.abs((p3[0] - p1[0]) * nx + (p3[1] - p1[1]) * ny);
           const pts: [number, number][] = [];
           for (let i = 0; i <= 8; i++) {
-            const ang = (Math.PI / 2) + (i / 8) * Math.PI;
+            const ang = -(Math.PI / 2) + (i / 8) * Math.PI;
             const ax = Math.atan2(dy, dx);
             pts.push([p2[0] + r * Math.cos(ax + ang), p2[1] + r * Math.sin(ax + ang)]);
           }
           for (let i = 0; i <= 8; i++) {
-            const ang = (3 * Math.PI / 2) + (i / 8) * Math.PI;
+            const ang = (Math.PI / 2) + (i / 8) * Math.PI;
             const ax = Math.atan2(dy, dx);
             pts.push([p1[0] + r * Math.cos(ax + ang), p1[1] + r * Math.sin(ax + ang)]);
           }
@@ -1469,6 +1469,48 @@ export function DxfPreview({
                       y1={rect3PtPoints[0][1]}
                       x2={cursorMm.x}
                       y2={cursorMm.y}
+                      stroke="var(--accent)"
+                      strokeWidth={0.8 * handleScale}
+                    />
+                  )}
+
+                  {slot4PtPoints.length === 1 && cursorMm && (
+                    <line
+                      x1={slot4PtPoints[0][0]}
+                      y1={slot4PtPoints[0][1]}
+                      x2={cursorMm.x}
+                      y2={cursorMm.y}
+                      stroke="var(--accent)"
+                      strokeWidth={0.8 * handleScale}
+                    />
+                  )}
+                  {slot4PtPoints.length === 2 && cursorMm && (
+                    <path
+                      d={(() => {
+                        const p1 = slot4PtPoints[0];
+                        const p2 = slot4PtPoints[1];
+                        const p3: [number, number] = [cursorMm.x, cursorMm.y];
+                        const dx = p2[0] - p1[0];
+                        const dy = p2[1] - p1[1];
+                        const len = Math.hypot(dx, dy);
+                        if (len < 0.001) return '';
+                        const nx = -dy / len;
+                        const ny = dx / len;
+                        const r = Math.abs((p3[0] - p1[0]) * nx + (p3[1] - p1[1]) * ny);
+                        const pts: [number, number][] = [];
+                        for (let i = 0; i <= 8; i++) {
+                          const ang = -(Math.PI / 2) + (i / 8) * Math.PI;
+                          const ax = Math.atan2(dy, dx);
+                          pts.push([p2[0] + r * Math.cos(ax + ang), p2[1] + r * Math.sin(ax + ang)]);
+                        }
+                        for (let i = 0; i <= 8; i++) {
+                          const ang = (Math.PI / 2) + (i / 8) * Math.PI;
+                          const ax = Math.atan2(dy, dx);
+                          pts.push([p1[0] + r * Math.cos(ax + ang), p1[1] + r * Math.sin(ax + ang)]);
+                        }
+                        return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ') + ' Z';
+                      })()}
+                      fill="none"
                       stroke="var(--accent)"
                       strokeWidth={0.8 * handleScale}
                     />
