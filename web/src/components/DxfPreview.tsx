@@ -450,11 +450,12 @@ export function DxfPreview({
     const coords = getModelCoords(clientX, clientY);
     if (!coords) return null;
 
-    const handleScale = Math.max(0.05, viewWidth / 400);
-    const snapRadius = Math.max(1.5 * handleScale, 2.0); 
+    const handleScale = Math.max(0.005, viewWidth / 400);
+    const snapRadius = Math.max(0.1, viewWidth / 80); 
     let bestPt = coords;
     let minD = snapRadius;
 
+    // 1. Priority 1: Vertices and Circle Centers
     for (const ent of entities) {
       if (ent.type === 'circle' && ent.cx != null && ent.cy != null) {
         const d = Math.hypot(coords.x - ent.cx, coords.y - ent.cy);
@@ -472,7 +473,42 @@ export function DxfPreview({
         }
       }
     }
-    return minD < snapRadius ? bestPt : null;
+
+    if (minD < snapRadius) {
+      return bestPt;
+    }
+
+    // 2. Priority 2: Edges / Segments
+    let edgeMinD = snapRadius;
+    let bestEdgePt: { x: number; y: number } | null = null;
+
+    for (const ent of entities) {
+      if (ent.type === 'polyline' && ent.points && ent.points.length >= 2) {
+        const pts = ent.points;
+        for (let i = 0; i < pts.length; i++) {
+          const p1 = pts[i];
+          const p2 = pts[(i + 1) % pts.length];
+          if (!ent.closed && i === pts.length - 1) continue;
+
+          const dx = p2[0] - p1[0];
+          const dy = p2[1] - p1[1];
+          const l2 = dx * dx + dy * dy;
+          if (l2 === 0) continue;
+          let t = ((coords.x - p1[0]) * dx + (coords.y - p1[1]) * dy) / l2;
+          t = Math.max(0, Math.min(1, t));
+          const projX = p1[0] + t * dx;
+          const projY = p1[1] + t * dy;
+          const d = Math.hypot(coords.x - projX, coords.y - projY);
+
+          if (d < edgeMinD) {
+            edgeMinD = d;
+            bestEdgePt = { x: projX, y: projY };
+          }
+        }
+      }
+    }
+
+    return bestEdgePt ? bestEdgePt : null;
   };
 
   const findClosestEntity = (pt: { x: number; y: number }) => {
@@ -631,10 +667,12 @@ export function DxfPreview({
       setLastPos({ x: e.clientX, y: e.clientY });
       e.currentTarget.setPointerCapture(e.pointerId);
     } else if (selectedTool === 'measure') {
-      setMeasureStart(clickCoords);
-      setMeasureEnd(clickCoords);
-      setIsDragging(true);
-      e.currentTarget.setPointerCapture(e.pointerId);
+      if (!measureStart || (measureStart && measureEnd && (measureStart.x !== measureEnd.x || measureStart.y !== measureEnd.y))) {
+        setMeasureStart(clickCoords);
+        setMeasureEnd(clickCoords);
+      } else {
+        setMeasureEnd(clickCoords);
+      }
     } else if (selectedTool === 'brush') {
       const newEntities = applyBrushDeform(clickCoords.x, clickCoords.y, entities);
       onEntitiesChange(newEntities);
@@ -1067,7 +1105,7 @@ export function DxfPreview({
         }
       }
       setLastPos({ x: e.clientX, y: e.clientY });
-    } else if (selectedTool === 'measure') {
+    } else if (selectedTool === 'measure' && measureStart) {
       const rawCoords = getModelCoords(e.clientX, e.clientY);
       if (rawCoords) {
         let coords = rawCoords;
@@ -1282,129 +1320,360 @@ export function DxfPreview({
                       </text>
                     </g>
                   )}
-
                   {(() => {
-                    const handleScale = Math.max(0.05, viewWidth / 400);
+                    const handleScale = Math.max(0.005, viewWidth / 350);
                     return (
                       <g transform="scale(1, -1)">
                         {hoveredCoord && (
                           <g transform={`translate(${hoveredCoord.x}, ${hoveredCoord.y})`} style={{ pointerEvents: 'none' }}>
-                        <circle r={Math.max(0.2, viewWidth / 250) * 3} fill="none" stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.4} />
-                        <line x1={-Math.max(0.2, viewWidth / 250) * 6} y1={0} x2={Math.max(0.2, viewWidth / 250) * 6} y2={0} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
-                        <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
-                      </g>
-                    )}
-                    {entities.map((entity, entityIdx) => {
-                      const layer = entity.layer;
-                      if (layer === 'HOLES' && !holeLayerEnabled) return null;
-                      if (layer === 'OUTER' && !outerLayerEnabled) return null;
-                      if (layer === 'DETAILS' && !detailsLayerEnabled) return null;
+                            <circle r={Math.max(0.2, viewWidth / 250) * 3} fill="none" stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.4} />
+                            <line x1={-Math.max(0.2, viewWidth / 250) * 6} y1={0} x2={Math.max(0.2, viewWidth / 250) * 6} y2={0} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
+                            <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke="#ff9800" strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
+                          </g>
+                        )}
+                        {entities.map((entity, entityIdx) => {
+                          const layer = entity.layer;
+                          if (layer === 'HOLES' && !holeLayerEnabled) return null;
+                          if (layer === 'OUTER' && !outerLayerEnabled) return null;
+                          if (layer === 'DETAILS' && !detailsLayerEnabled) return null;
 
-                      const isHole = layer === 'HOLES';
-                      const isDetail = layer === 'DETAILS';
-                      const color = isHole ? '#5b9bd5' : isDetail ? '#10b981' : '#ffffff';
+                          const isHole = layer === 'HOLES';
+                          const isDetail = layer === 'DETAILS';
+                          const color = isHole ? '#5b9bd5' : isDetail ? '#10b981' : '#ffffff';
 
-                      if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
-                        return (
-                          <circle
-                            key={`svg-ent-${entityIdx}`}
-                            cx={entity.cx}
-                            cy={entity.cy}
-                            r={entity.r}
+                          if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
+                            return (
+                              <circle
+                                key={`svg-ent-${entityIdx}`}
+                                cx={entity.cx}
+                                cy={entity.cy}
+                                r={entity.r}
+                                fill="none"
+                                stroke={color}
+                                strokeWidth={0.6 * handleScale}
+                              />
+                            );
+                          } else if (entity.type === 'polyline' && entity.points && entity.points.length > 0) {
+                            const d = entity.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ') + (entity.closed ? ' Z' : '');
+                            return (
+                              <path
+                                key={`svg-ent-${entityIdx}`}
+                                d={d}
+                                fill="none"
+                                stroke={color}
+                                strokeWidth={0.6 * handleScale}
+                              />
+                            );
+                          }
+                          return null;
+                        })}
+
+                        {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
+                          const layer = entity.layer;
+                          if (layer === 'HOLES' && !holeLayerEnabled) return null;
+                          if (layer === 'OUTER' && !outerLayerEnabled) return null;
+                          if (layer === 'DETAILS' && !detailsLayerEnabled) return null;
+
+                          if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
+                            if (selectedTool === 'delete-point') return null;
+                            return (
+                              <g key={entityIdx}>
+                                <circle
+                                  cx={entity.cx}
+                                  cy={entity.cy}
+                                  r={1.2 * handleScale}
+                                  fill="var(--accent)"
+                                  stroke="white"
+                                  strokeWidth={0.3 * handleScale}
+                                  style={{ cursor: 'move' }}
+                                  onPointerDown={(e) => handleCircleCenterDragStart(e, entityIdx)}
+                                  onPointerUp={handleHandlePointerUp}
+                                />
+                                <circle
+                                  cx={entity.cx + entity.r}
+                                  cy={entity.cy}
+                                  r={1.2 * handleScale}
+                                  fill="#ffcc00"
+                                  stroke="white"
+                                  strokeWidth={0.3 * handleScale}
+                                  style={{ cursor: 'ew-resize' }}
+                                  onPointerDown={(e) => handleCircleRadiusDragStart(e, entityIdx)}
+                                  onPointerUp={handleHandlePointerUp}
+                                />
+                              </g>
+                            );
+                          } else if (entity.type === 'polyline' && entity.points) {
+                            return (
+                              <g key={entityIdx}>
+                                {entity.points.map((pt, ptIdx) => (
+                                  <circle
+                                    key={ptIdx}
+                                    cx={pt[0]}
+                                    cy={pt[1]}
+                                    r={1.2 * handleScale}
+                                    fill={selectedTool === 'delete-point' ? '#ff3b30' : 'var(--accent)'}
+                                    stroke="white"
+                                    strokeWidth={0.3 * handleScale}
+                                    style={{ cursor: selectedTool === 'delete-point' ? 'pointer' : 'move' }}
+                                    onPointerDown={(e) => handleVertexPointerDown(e, entityIdx, ptIdx)}
+                                    onPointerUp={handleHandlePointerUp}
+                                  />
+                                ))}
+                              </g>
+                            );
+                          }
+                          return null;
+                        })}
+
+                        {measureStart && measureEnd && (() => {
+                          const distance = Math.hypot(measureEnd.x - measureStart.x, measureEnd.y - measureStart.y);
+                          const midX = (measureStart.x + measureEnd.x) / 2;
+                          const midY = (measureStart.y + measureEnd.y) / 2;
+                          const textScale = Math.max(0.005, viewWidth / 150);
+                          const boxW = 32 * textScale;
+                          const boxH = 6 * textScale;
+                          return (
+                            <g className="measure-overlay">
+                              <line
+                                x1={measureStart.x}
+                                y1={measureStart.y}
+                                x2={measureEnd.x}
+                                y2={measureEnd.y}
+                                stroke="var(--accent)"
+                                strokeWidth={0.6 * handleScale}
+                                strokeDasharray={`${2 * handleScale},${2 * handleScale}`}
+                              />
+                              <circle cx={measureStart.x} cy={measureStart.y} r={1.5 * handleScale} fill="none" stroke="var(--accent)" strokeWidth={0.4 * handleScale} />
+                              <circle cx={measureEnd.x} cy={measureEnd.y} r={1.5 * handleScale} fill="none" stroke="var(--accent)" strokeWidth={0.4 * handleScale} />
+
+                              <g transform={`translate(${midX}, ${midY}) scale(1, -1)`}>
+                                <rect
+                                  x={-boxW / 2}
+                                  y={-boxH / 2}
+                                  width={boxW}
+                                  height={boxH}
+                                  fill="var(--panel)"
+                                  stroke="var(--accent)"
+                                  strokeWidth={0.4 * handleScale}
+                                  rx={1 * textScale}
+                                />
+                                <text
+                                  x="0"
+                                  y={0.2 * textScale}
+                                  fill="var(--accent)"
+                                  fontSize={4.2 * textScale}
+                                  textAnchor="middle"
+                                  dominantBaseline="middle"
+                                  fontWeight="bold"
+                                  className="tabular-nums"
+                                >
+                                  {distance.toFixed(2)} mm
+                                </text>
+                              </g>
+                            </g>
+                          );
+                        })()}
+                        {snapPoint && (
+                          <rect
+                            x={snapPoint.x - 1.2 * handleScale}
+                            y={snapPoint.y - 1.2 * handleScale}
+                            width={2.4 * handleScale}
+                            height={2.4 * handleScale}
                             fill="none"
-                            stroke={color}
-                            strokeWidth={0.6 * handleScale}
+                            stroke="var(--accent)"
+                            strokeWidth={0.4 * handleScale}
                           />
-                        );
-                      } else if (entity.type === 'polyline' && entity.points && entity.points.length > 0) {
-                        const d = entity.points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ') + (entity.closed ? ' Z' : '');
-                        return (
+                        )}
+
+                        {alignSelectedSegment && (
+                          <line
+                            x1={alignSelectedSegment.p1[0]}
+                            y1={alignSelectedSegment.p1[1]}
+                            x2={alignSelectedSegment.p2[0]}
+                            y2={alignSelectedSegment.p2[1]}
+                            stroke="#ff9f0a"
+                            strokeWidth={2.5 * handleScale}
+                            strokeLinecap="round"
+                            opacity="0.85"
+                          />
+                        )}
+
+                        {selectedTool === 'brush' && cursorMm && (
+                          <g style={{ opacity: 0.85 }}>
+                            {brushShape === 'circle' ? (
+                              <circle
+                                cx={cursorMm.x}
+                                cy={cursorMm.y}
+                                r={brushRadius}
+                                fill="var(--accent-soft)"
+                                style={{ pointerEvents: 'none' }}
+                              />
+                            ) : (
+                              <rect
+                                x={cursorMm.x - brushRadius}
+                                y={cursorMm.y - brushRadius}
+                                width={2 * brushRadius}
+                                height={2 * brushRadius}
+                                fill="var(--accent-soft)"
+                                style={{ pointerEvents: 'none' }}
+                              />
+                            )}
+                          </g>
+                        )}
+
+                        {drawPoints.length > 0 && (
+                          <polyline
+                            points={drawPoints.map(p => `${p[0]},${p[1]}`).join(' ')}
+                            fill="none"
+                            stroke="var(--accent)"
+                            strokeWidth={0.8 * handleScale}
+                          />
+                        )}
+                        {drawPoints.length > 0 && cursorMm && (
+                          <line
+                            x1={drawPoints[drawPoints.length - 1][0]}
+                            y1={drawPoints[drawPoints.length - 1][1]}
+                            x2={cursorMm.x}
+                            y2={cursorMm.y}
+                            stroke="var(--accent)"
+                            strokeWidth={0.8 * handleScale}
+                          />
+                        )}
+
+                        {rect3PtPoints.length === 1 && cursorMm && (
+                          <line
+                            x1={rect3PtPoints[0][0]}
+                            y1={rect3PtPoints[0][1]}
+                            x2={cursorMm.x}
+                            y2={cursorMm.y}
+                            stroke="var(--accent)"
+                            strokeWidth={0.8 * handleScale}
+                          />
+                        )}
+
+                        {slot4PtPoints.length === 1 && cursorMm && (
+                          <line
+                            x1={slot4PtPoints[0][0]}
+                            y1={slot4PtPoints[0][1]}
+                            x2={cursorMm.x}
+                            y2={cursorMm.y}
+                            stroke="var(--accent)"
+                            strokeWidth={0.8 * handleScale}
+                          />
+                        )}
+                        {slot4PtPoints.length === 2 && cursorMm && (
                           <path
-                            key={`svg-ent-${entityIdx}`}
-                            d={d}
+                            d={(() => {
+                              const p1 = slot4PtPoints[0];
+                              const p2 = slot4PtPoints[1];
+                              const p3: [number, number] = [cursorMm.x, cursorMm.y];
+                              const dx = p2[0] - p1[0];
+                              const dy = p2[1] - p1[1];
+                              const len = Math.hypot(dx, dy);
+                              if (len < 0.001) return '';
+                              const nx = -dy / len;
+                              const ny = dx / len;
+                              const r = Math.abs((p3[0] - p1[0]) * nx + (p3[1] - p1[1]) * ny);
+                              const pts: [number, number][] = [];
+                              for (let i = 0; i <= 8; i++) {
+                                const ang = -(Math.PI / 2) + (i / 8) * Math.PI;
+                                const ax = Math.atan2(dy, dx);
+                                pts.push([p2[0] + r * Math.cos(ax + ang), p2[1] + r * Math.sin(ax + ang)]);
+                              }
+                              for (let i = 0; i <= 8; i++) {
+                                const ang = (Math.PI / 2) + (i / 8) * Math.PI;
+                                const ax = Math.atan2(dy, dx);
+                                pts.push([p1[0] + r * Math.cos(ax + ang), p1[1] + r * Math.sin(ax + ang)]);
+                              }
+                              return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ') + ' Z';
+                            })()}
                             fill="none"
-                            stroke={color}
+                            stroke="var(--accent)"
+                            strokeWidth={0.8 * handleScale}
+                          />
+                        )}
+                        {rect3PtPoints.length === 2 && cursorMm && (
+                          <path
+                            d={(() => {
+                              const p1 = rect3PtPoints[0];
+                              const p2 = rect3PtPoints[1];
+                              const dx = p2[0] - p1[0];
+                              const dy = p2[1] - p1[1];
+                              const len = Math.hypot(dx, dy);
+                              if (len < 0.001) return '';
+                              const nx = -dy / len;
+                              const ny = dx / len;
+                              const h = (cursorMm.x - p1[0]) * nx + (cursorMm.y - p1[1]) * ny;
+                              const p4 = [p2[0] + h * nx, p2[1] + h * ny];
+                              const p5 = [p1[0] + h * nx, p1[1] + h * ny];
+                              return `M ${p1[0]} ${p1[1]} L ${p2[0]} ${p2[1]} L ${p4[0]} ${p4[1]} L ${p5[0]} ${p5[1]} Z`;
+                            })()}
+                            fill="none"
+                            stroke="var(--accent)"
+                            strokeWidth={0.8 * handleScale}
+                          />
+                        )}
+
+                        {circle3PtPoints.length > 0 && (
+                          <polyline
+                            points={circle3PtPoints.map(p => `${p[0]},${p[1]}`).join(' ')}
+                            fill="none"
+                            stroke="var(--accent)"
+                            strokeWidth={0.8 * handleScale}
+                          />
+                        )}
+                        {circle3PtPoints.length === 2 && cursorMm && (
+                          <path
+                            d={(() => {
+                              const circle = computeCircumcircle(circle3PtPoints[0], circle3PtPoints[1], [cursorMm.x, cursorMm.y]);
+                              if (!circle) return '';
+                              return `M ${circle.cx + circle.r} ${circle.cy} A ${circle.r} ${circle.r} 0 1 0 ${circle.cx - circle.r} ${circle.cy} A ${circle.r} ${circle.r} 0 1 0 ${circle.cx + circle.r} ${circle.cy}`;
+                            })()}
+                            fill="none"
+                            stroke="var(--accent)"
+                            strokeWidth={0.8 * handleScale}
+                          />
+                        )}
+
+                        {splinePoints.length > 0 && (
+                          <polyline
+                            points={evaluateSplinePoints(cursorMm ? [...splinePoints, [cursorMm.x, cursorMm.y]] : splinePoints).map(p => `${p[0]},${p[1]}`).join(' ')}
+                            fill="none"
+                            stroke="var(--accent)"
+                            strokeWidth={0.8 * handleScale}
+                          />
+                        )}
+
+                        {subregionBox && (
+                          <rect
+                            x={Math.min(subregionBox.start.x, subregionBox.end.x)}
+                            y={Math.min(subregionBox.start.y, subregionBox.end.y)}
+                            width={Math.abs(subregionBox.end.x - subregionBox.start.x)}
+                            height={Math.abs(subregionBox.end.y - subregionBox.start.y)}
+                            fill="rgba(255, 152, 0, 0.15)"
+                            stroke="#ff9800"
+                            strokeWidth={1.2 * handleScale}
+                            strokeDasharray="4,4"
+                          />
+                        )}
+
+                        {arcStart && arcEnd && cursorMm && (
+                          <path
+                            d={(() => {
+                              const pts: [number, number][] = [];
+                              for (let i = 0; i <= 16; i++) {
+                                const t = i / 16;
+                                const x = (1 - t) ** 2 * arcStart.x + 2 * (1 - t) * t * cursorMm.x + t ** 2 * arcEnd.x;
+                                const y = (1 - t) ** 2 * arcStart.y + 2 * (1 - t) * t * cursorMm.y + t ** 2 * arcEnd.y;
+                                pts.push([x, y]);
+                              }
+                              return pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]} ${p[1]}`).join(' ');
+                            })()}
+                            fill="none"
+                            stroke="var(--accent)"
                             strokeWidth={0.6 * handleScale}
                           />
-                        );
-                      }
-                      return null;
-                    })}
-
-                    {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
-                    const layer = entity.layer;
-                    if (layer === 'HOLES' && !holeLayerEnabled) return null;
-                    if (layer === 'OUTER' && !outerLayerEnabled) return null;
-                    if (layer === 'DETAILS' && !detailsLayerEnabled) return null;
-
-                    const handleScale = Math.max(0.2, viewWidth / 250);
-
-                    if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
-                      
-                      if (selectedTool === 'delete-point') return null;
-                      return (
-                        <g key={entityIdx}>
-                          {}
-                          <circle
-                            cx={entity.cx}
-                            cy={entity.cy}
-                            r={1.2 * handleScale}
-                            fill="var(--accent)"
-                            stroke="white"
-                            strokeWidth={0.3 * handleScale}
-                            style={{ cursor: 'move' }}
-                            onPointerDown={(e) => handleCircleCenterDragStart(e, entityIdx)}
-                            onPointerUp={handleHandlePointerUp}
-                          />
-                          {}
-                          <circle
-                            cx={entity.cx + entity.r}
-                            cy={entity.cy}
-                            r={1.2 * handleScale}
-                            fill="#ffcc00"
-                            stroke="white"
-                            strokeWidth={0.3 * handleScale}
-                            style={{ cursor: 'ew-resize' }}
-                            onPointerDown={(e) => handleCircleRadiusDragStart(e, entityIdx)}
-                            onPointerUp={handleHandlePointerUp}
-                          />
-                        </g>
-                      );
-                    } else if (entity.type === 'polyline' && entity.points) {
-                      return (
-                        <g key={entityIdx}>
-                          {entity.points.map((pt, ptIdx) => (
-                            <circle
-                              key={ptIdx}
-                              cx={pt[0]}
-                              cy={pt[1]}
-                              r={1.2 * handleScale}
-                              fill={selectedTool === 'delete-point' ? '#ff3b30' : 'var(--accent)'} 
-                              stroke="white"
-                              strokeWidth={0.3 * handleScale}
-                              style={{ cursor: selectedTool === 'delete-point' ? 'pointer' : 'move' }}
-                              onPointerDown={(e) => handleVertexPointerDown(e, entityIdx, ptIdx)}
-                              onPointerUp={handleHandlePointerUp}
-                            />
-                          ))}
-                        </g>
-                      );
-                    }
-                    return null;
-                  })}
-
-                  {}
-                  {snapPoint && (
-                    <rect
-                      x={snapPoint.x - 1.2}
-                      y={snapPoint.y - 1.2}
-                      width="2.4"
-                      height="2.4"
-                      fill="none"
-                      stroke="var(--accent)"
-                      strokeWidth="0.4"
-                    />
-                  )}
+                        )}
 
                   {alignSelectedSegment && (
                     <line
@@ -1642,8 +1911,6 @@ export function DxfPreview({
                           fill="var(--accent)"
                           fontSize="4.2"
                           textAnchor="middle"
-                          dominantBaseline="middle"
-                          fontWeight="bold"
                           className="tabular-nums"
                         >
                           {distance.toFixed(2)} mm
@@ -1651,10 +1918,10 @@ export function DxfPreview({
                       </g>
                     </g>
                   )}
-                </g>
-                    );
-                  })()}
-                </svg>
+              </g>
+            );
+          })()}
+        </svg>
             </div>
           ) : result ? (
               <div className="empty-state">
