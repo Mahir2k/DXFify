@@ -166,8 +166,8 @@ export function ImagePreview({
   const scale = result?.report?.pixelsPerMm || 1;
   const paperW = 210.0;
   const paperH = 297.0;
-  const height = selectedTab === 'original' ? paperH * scale : (naturalSize?.height || 100);
-  const width = selectedTab === 'original' ? paperW * scale : (naturalSize?.width || 100);
+  const height = naturalSize?.height || 100;
+  const width = naturalSize?.width || 100;
 
   const markerCx = 32.2;
   const markerCy = 34.2;

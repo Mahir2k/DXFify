@@ -507,10 +507,10 @@ def run_pipeline(
 
         cx, cy = marker_offset_x, marker_offset_y
         r = int(marker_clear_radius * scale)
-        m0_x, m0_y = int(cx * scale), int(cy * scale)
-        m1_x, m1_y = int((paper_w - cx) * scale), int(cy * scale)
-        m2_x, m2_y = int((paper_w - cx) * scale), int((paper_h - cy) * scale)
-        m3_x, m3_y = int(cx * scale), int((paper_h - cy) * scale)
+        m2_x, m2_y = int(cx * scale), int(cy * scale)
+        m3_x, m3_y = int((paper_w - cx) * scale), int(cy * scale)
+        m1_x, m1_y = int(cx * scale), int((paper_h - cy) * scale)
+        m0_x, m0_y = int((paper_w - cx) * scale), int((paper_h - cy) * scale)
         for mx, my in [(m0_x, m0_y), (m1_x, m1_y), (m2_x, m2_y), (m3_x, m3_y)]:
             cv2.rectangle(warped_mask, (mx - r, my - r), (mx + r, my + r), 0, -1)
     else:
