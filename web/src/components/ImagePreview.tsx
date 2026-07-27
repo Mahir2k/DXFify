@@ -390,7 +390,7 @@ export function ImagePreview({
                   )}
                 </g>
 
-                <g style={{ opacity: 0.8, pointerEvents: 'none' }}>
+                <g ref={gRef} style={{ opacity: 0.8, pointerEvents: 'none' }}>
                   {entities.map((entity, idx) => {
                     const isHole = entity.layer === 'HOLES';
                     const color = isHole ? '#ff3b30' : '#00e5ff';
