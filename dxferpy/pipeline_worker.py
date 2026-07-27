@@ -665,22 +665,22 @@ def process_region_route():
     try:
         paper_w, paper_h = PAPER_SIZES.get(paper_size.lower(), PAPER_SIZES["a4"])
         img, mask, _ = segment_single_image(input_path, rembg_session, mask_threshold=240)
-        scale = mask.shape[0] / paper_h
-        height, width = mask.shape[:2]
+        
+        H, scale, marker_centers = get_homography(
+            input_path, paper_w, paper_h
+        )
+        if H is not None:
+            work_w = int(paper_w * scale)
+            work_h = int(paper_h * scale)
+            warped_mask = cv2.warpPerspective(mask, H, (work_w, work_h), flags=cv2.INTER_NEAREST)
+        else:
+            warped_mask = mask
+            scale = mask.shape[0] / paper_h
 
+        height, width = warped_mask.shape[:2]
         min_x, min_y, max_x, max_y = bbox
-        crop_x1 = max(0, int(min_x * scale))
-        crop_x2 = min(width, int(max_x * scale))
-        crop_y1 = max(0, int(height - max_y * scale))
-        crop_y2 = min(height, int(height - min_y * scale))
 
-        if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
-            return jsonify({"success": True, "entities": []})
-
-        cropped_mask = mask[crop_y1:crop_y2, crop_x1:crop_x2]
-        crop_h, crop_w = cropped_mask.shape[:2]
-
-        contours, hierarchy = cv2.findContours(cropped_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+        contours, hierarchy = cv2.findContours(warped_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
         entities = []
 
         if hierarchy is not None:
@@ -692,37 +692,62 @@ def process_region_route():
                 if area < 50:
                     continue
 
-                contour_full = contour_f.copy()
-                contour_full[:, 0, 0] += crop_x1
-                contour_full[:, 0, 1] += crop_y1
-
-                x_min_f, y_min_f, w_f, h_f = cv2.boundingRect(contour_full)
+                x_min_f, y_min_f, w_f, h_f = cv2.boundingRect(contour_f)
                 centroid_f = np.array([x_min_f + w_f / 2, y_min_f + h_f / 2])
 
-                working_contour = contour_full.copy()
-                if curve_strategy == "pratt":
-                    working_contour = apply_pratt_arc_fit_contour(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
-                elif curve_strategy == "spline":
-                    working_contour = fit_contour_spline(working_contour)
-                elif curve_strategy == "gaussian":
-                    working_contour = apply_contour_gaussian_filter(working_contour)
-                elif curve_strategy == "ransac":
-                    recon = apply_ransac_cad_reconstruction(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
-                    if recon is not None:
-                        working_contour = recon
+                c_min_x = x_min_f / scale
+                c_max_x = (x_min_f + w_f) / scale
+                c_min_y = (height - (y_min_f + h_f)) / scale
+                c_max_y = (height - y_min_f) / scale
+                c_cx = centroid_f[0] / scale
+                c_cy = (height - centroid_f[1]) / scale
 
-                if curve_strategy == "current":
-                    pts = vectorize_contour(working_contour, height, scale)
-                else:
-                    pts = [(float(p[0, 0]) / scale, float(height - p[0, 1]) / scale) for p in working_contour]
+                overlaps = (c_max_x >= min_x and c_min_x <= max_x and c_max_y >= min_y and c_min_y <= max_y)
+                center_in = (min_x <= c_cx <= max_x and min_y <= c_cy <= max_y)
 
-                if pts:
+                if not (overlaps or center_in):
+                    continue
+
+                (cx, cy), radius = cv2.minEnclosingCircle(contour_f)
+                circle_area = np.pi * radius * radius if radius > 0 else 0
+                area_ratio = (area / circle_area) if circle_area > 0 else 0
+
+                if radius > 0 and area_ratio > 0.85:
+                    cx_mm = float(cx) / scale
+                    cy_mm = float(height - cy) / scale
+                    radius_mm = float(radius) / scale
                     entities.append({
-                        "type": "polyline",
+                        "type": "circle",
                         "layer": layer,
-                        "points": [[round(px, 4), round(py, 4)] for px, py in pts],
-                        "closed": True,
+                        "cx": round(cx_mm, 4),
+                        "cy": round(cy_mm, 4),
+                        "r": round(radius_mm, 4),
                     })
+                else:
+                    working_contour = contour_f.copy()
+                    if curve_strategy == "pratt":
+                        working_contour = apply_pratt_arc_fit_contour(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
+                    elif curve_strategy == "spline":
+                        working_contour = fit_contour_spline(working_contour)
+                    elif curve_strategy == "gaussian":
+                        working_contour = apply_contour_gaussian_filter(working_contour)
+                    elif curve_strategy == "ransac":
+                        recon = apply_ransac_cad_reconstruction(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
+                        if recon is not None:
+                            working_contour = recon
+
+                    if curve_strategy == "current":
+                        pts = vectorize_contour(working_contour, height, scale)
+                    else:
+                        pts = [(float(p[0, 0]) / scale, float(height - p[0, 1]) / scale) for p in working_contour]
+
+                    if pts:
+                        entities.append({
+                            "type": "polyline",
+                            "layer": layer,
+                            "points": [[round(px, 4), round(py, 4)] for px, py in pts],
+                            "closed": True,
+                        })
 
         return jsonify({"success": True, "entities": entities})
     except Exception as e:

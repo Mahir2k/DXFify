@@ -11,12 +11,12 @@ interface ToolbarProps {
 }
 
 const toolMeta: Record<ToolId, { label: string; glyph: string }> = {
-  select: { label: 'Pan / Inspect', glyph: '↖' },
+  select: { label: 'Move & Edit Nodes (Pan canvas on drag)', glyph: '↖' },
   snap: { label: 'Snap', glyph: '⌖' },
   measure: { label: 'Measure Distance', glyph: '📏' },
   brush: { label: 'Proportional Brush', glyph: '🖌' },
   align: { label: 'Align Parallel', glyph: '⇄' },
-  'subregion-select': { label: 'Sub-Region Reprocess Area', glyph: '⬚' },
+  'subregion-select': { label: 'Selection Area Box (Drag box to select)', glyph: '⬚' },
   line: { label: 'Line', glyph: '╱' },
   arc: { label: '3-Point Arc', glyph: '⌒' },
   polyline: { label: 'Polyline', glyph: '⌁' },

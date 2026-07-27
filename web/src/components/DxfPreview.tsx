@@ -90,6 +90,7 @@ export function DxfPreview({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const [isDragging, setIsDragging] = useState(false);
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
@@ -129,6 +130,73 @@ export function DxfPreview({
   const [splinePoints, setSplinePoints] = useState<[number, number][]>([]);
   const [subregionBox, setSubregionBox] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null);
 
+  const [selectedEntityIndices, setSelectedEntityIndices] = useState<number[]>([]);
+  const [selectionMarquee, setSelectionMarquee] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null);
+  const [transformMode, setTransformMode] = useState<'translate' | 'scale-tl' | 'scale-tr' | 'scale-bl' | 'scale-br' | 'rotate' | null>(null);
+  const [transformStart, setTransformStart] = useState<{
+    mouse: { x: number; y: number };
+    entities: GeometryEntity[];
+    center: { x: number; y: number; cx: number; cy: number };
+    bbox: { minX: number; minY: number; maxX: number; maxY: number; cx: number; cy: number; width: number; height: number };
+    startAngle?: number;
+  } | null>(null);
+
+  const computeBoundingBoxForIndices = (indices: number[], entityList: GeometryEntity[]) => {
+    if (indices.length === 0) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const idx of indices) {
+      const ent = entityList[idx];
+      if (!ent) continue;
+      if (ent.type === 'circle' && ent.cx != null && ent.cy != null && ent.r != null) {
+        minX = Math.min(minX, ent.cx - ent.r);
+        minY = Math.min(minY, ent.cy - ent.r);
+        maxX = Math.max(maxX, ent.cx + ent.r);
+        maxY = Math.max(maxY, ent.cy + ent.r);
+      } else if (ent.type === 'polyline' && ent.points && ent.points.length > 0) {
+        for (const pt of ent.points) {
+          minX = Math.min(minX, pt[0]);
+          minY = Math.min(minY, pt[1]);
+          maxX = Math.max(maxX, pt[0]);
+          maxY = Math.max(maxY, pt[1]);
+        }
+      }
+    }
+    if (minX === Infinity) return null;
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const width = maxX - minX;
+    const height = maxY - minY;
+    return { minX, minY, maxX, maxY, cx, cy, width, height };
+  };
+
+  const findEntitiesInBox = (box: { minX: number; minY: number; maxX: number; maxY: number }, entityList: GeometryEntity[]) => {
+    const { minX, minY, maxX, maxY } = box;
+    const selected: number[] = [];
+    entityList.forEach((ent, idx) => {
+      if (ent.type === 'circle' && ent.cx != null && ent.cy != null && ent.r != null) {
+        const eMinX = ent.cx - ent.r;
+        const eMaxX = ent.cx + ent.r;
+        const eMinY = ent.cy - ent.r;
+        const eMaxY = ent.cy + ent.r;
+        if (eMinX >= minX && eMaxX <= maxX && eMinY >= minY && eMaxY <= maxY) {
+          selected.push(idx);
+        }
+      } else if (ent.type === 'polyline' && ent.points && ent.points.length > 0) {
+        let eMinX = Infinity, eMinY = Infinity, eMaxX = -Infinity, eMaxY = -Infinity;
+        for (const pt of ent.points) {
+          eMinX = Math.min(eMinX, pt[0]);
+          eMinY = Math.min(eMinY, pt[1]);
+          eMaxX = Math.max(eMaxX, pt[0]);
+          eMaxY = Math.max(eMaxY, pt[1]);
+        }
+        if (eMinX >= minX && eMaxX <= maxX && eMinY >= minY && eMaxY <= maxY) {
+          selected.push(idx);
+        }
+      }
+    });
+    return selected;
+  };
+
   useEffect(() => {
     setMeasureStart(null);
     setMeasureEnd(null);
@@ -144,10 +212,12 @@ export function DxfPreview({
     setSlot4PtPoints([]);
     setSplinePoints([]);
     setSubregionBox(null);
+    if (selectedTool !== 'select' && selectedTool !== 'subregion-select') {
+      setSelectedEntityIndices([]);
+    }
     onActiveDrawingChange?.(null);
   }, [selectedTool]);
 
-  
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -157,11 +227,22 @@ export function DxfPreview({
         setArcStep(0);
         setSnapPoint(null);
         setActiveDrag(null);
+        setSelectedEntityIndices([]);
+        setSelectionMarquee(null);
+        setTransformMode(null);
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEntityIndices.length > 0) {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) {
+          return;
+        }
+        const newEntities = entities.filter((_, idx) => !selectedEntityIndices.includes(idx));
+        onEntitiesChange(newEntities, true);
+        setSelectedEntityIndices([]);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [entities, selectedEntityIndices, onEntitiesChange]);
 
   useEffect(() => {
     return () => {
@@ -357,6 +438,177 @@ export function DxfPreview({
     }
     return res;
   }
+
+  useEffect(() => {
+    if (!onActiveDrawingChange) return;
+
+    if (!cursorMm) {
+      onActiveDrawingChange(null);
+      return;
+    }
+
+    if (selectedTool === 'line' && drawPoints.length === 1) {
+      onActiveDrawingChange({
+        type: 'polyline',
+        points: [drawPoints[0], [cursorMm.x, cursorMm.y]],
+        closed: false,
+      });
+      return;
+    }
+
+    if (selectedTool === 'polyline' && drawPoints.length >= 1) {
+      onActiveDrawingChange({
+        type: 'polyline',
+        points: [...drawPoints, [cursorMm.x, cursorMm.y]],
+        closed: false,
+      });
+      return;
+    }
+
+    if (selectedTool === 'spline' && splinePoints.length >= 1) {
+      onActiveDrawingChange({
+        type: 'polyline',
+        points: evaluateSplinePoints([...splinePoints, [cursorMm.x, cursorMm.y]]),
+        closed: false,
+      });
+      return;
+    }
+
+    if (selectedTool === 'rect-3pt') {
+      if (rect3PtPoints.length === 1) {
+        onActiveDrawingChange({
+          type: 'polyline',
+          points: [rect3PtPoints[0], [cursorMm.x, cursorMm.y]],
+          closed: false,
+        });
+        return;
+      }
+      if (rect3PtPoints.length === 2) {
+        const p1 = rect3PtPoints[0];
+        const p2 = rect3PtPoints[1];
+        const p3: [number, number] = [cursorMm.x, cursorMm.y];
+        const dx = p2[0] - p1[0];
+        const dy = p2[1] - p1[1];
+        const len = Math.hypot(dx, dy);
+        if (len >= 0.001) {
+          const nx = -dy / len;
+          const ny = dx / len;
+          const h = (p3[0] - p1[0]) * nx + (p3[1] - p1[1]) * ny;
+          const p4: [number, number] = [p2[0] + h * nx, p2[1] + h * ny];
+          const p5: [number, number] = [p1[0] + h * nx, p1[1] + h * ny];
+          onActiveDrawingChange({
+            type: 'polyline',
+            points: [p1, p2, p4, p5],
+            closed: true,
+          });
+          return;
+        }
+      }
+    }
+
+    if (selectedTool === 'circle-3pt') {
+      if (circle3PtPoints.length === 1) {
+        onActiveDrawingChange({
+          type: 'polyline',
+          points: [circle3PtPoints[0], [cursorMm.x, cursorMm.y]],
+          closed: false,
+        });
+        return;
+      }
+      if (circle3PtPoints.length === 2) {
+        const circle = computeCircumcircle(circle3PtPoints[0], circle3PtPoints[1], [cursorMm.x, cursorMm.y]);
+        if (circle) {
+          onActiveDrawingChange({
+            type: 'circle',
+            cx: circle.cx,
+            cy: circle.cy,
+            r: circle.r,
+          });
+          return;
+        }
+      }
+    }
+
+    if (selectedTool === 'slot-4pt') {
+      if (slot4PtPoints.length === 1) {
+        onActiveDrawingChange({
+          type: 'polyline',
+          points: [slot4PtPoints[0], [cursorMm.x, cursorMm.y]],
+          closed: false,
+        });
+        return;
+      }
+      if (slot4PtPoints.length === 2) {
+        const p1 = slot4PtPoints[0];
+        const p2 = slot4PtPoints[1];
+        const p3: [number, number] = [cursorMm.x, cursorMm.y];
+        const dx = p2[0] - p1[0];
+        const dy = p2[1] - p1[1];
+        const len = Math.hypot(dx, dy);
+        if (len >= 0.001) {
+          const nx = -dy / len;
+          const ny = dx / len;
+          const r = Math.abs((p3[0] - p1[0]) * nx + (p3[1] - p1[1]) * ny);
+          const pts: [number, number][] = [];
+          const ax = Math.atan2(dy, dx);
+          for (let i = 0; i <= 8; i++) {
+            const ang = -(Math.PI / 2) + (i / 8) * Math.PI;
+            pts.push([p2[0] + r * Math.cos(ax + ang), p2[1] + r * Math.sin(ax + ang)]);
+          }
+          for (let i = 0; i <= 8; i++) {
+            const ang = (Math.PI / 2) + (i / 8) * Math.PI;
+            pts.push([p1[0] + r * Math.cos(ax + ang), p1[1] + r * Math.sin(ax + ang)]);
+          }
+          onActiveDrawingChange({
+            type: 'polyline',
+            points: pts,
+            closed: true,
+          });
+          return;
+        }
+      }
+    }
+
+    if (selectedTool === 'arc') {
+      if (arcStep === 1 && arcStart) {
+        onActiveDrawingChange({
+          type: 'polyline',
+          points: [[arcStart.x, arcStart.y], [cursorMm.x, cursorMm.y]],
+          closed: false,
+        });
+        return;
+      }
+      if (arcStep === 2 && arcStart && arcEnd) {
+        const pts: [number, number][] = [];
+        for (let i = 0; i <= 16; i++) {
+          const t = i / 16;
+          const x = (1 - t) ** 2 * arcStart.x + 2 * (1 - t) * t * cursorMm.x + t ** 2 * arcEnd.x;
+          const y = (1 - t) ** 2 * arcStart.y + 2 * (1 - t) * t * cursorMm.y + t ** 2 * arcEnd.y;
+          pts.push([x, y]);
+        }
+        onActiveDrawingChange({
+          type: 'polyline',
+          points: pts,
+          closed: false,
+        });
+        return;
+      }
+    }
+
+    onActiveDrawingChange(null);
+  }, [
+    selectedTool,
+    cursorMm,
+    drawPoints,
+    splinePoints,
+    rect3PtPoints,
+    circle3PtPoints,
+    slot4PtPoints,
+    arcStep,
+    arcStart,
+    arcEnd,
+    onActiveDrawingChange,
+  ]);
 
   const getModelCoords = (clientX: number, clientY: number): { x: number; y: number } | null => {
     if (!svgRef.current) return null;
@@ -666,7 +918,88 @@ export function DxfPreview({
       clickCoords = snapped;
     }
 
-    if (selectedTool === 'select') {
+    if (selectedTool === 'select' || selectedTool === 'subregion-select') {
+      const distanceScale = viewWidth / 300;
+      const selectionBBox = computeBoundingBoxForIndices(selectedEntityIndices, entities);
+      if (selectionBBox) {
+        const { minX, minY, maxX, maxY, cx, cy } = selectionBBox;
+
+        const rotHandleX = cx;
+        const rotHandleY = maxY + 8 * distanceScale;
+        if (Math.hypot(clickCoords.x - rotHandleX, clickCoords.y - rotHandleY) < 5.5 * distanceScale) {
+          setTransformMode('rotate');
+          setTransformStart({
+            mouse: clickCoords,
+            entities: JSON.parse(JSON.stringify(entities)),
+            center: { x: cx, y: cy, cx, cy },
+            bbox: selectionBBox,
+            startAngle: Math.atan2(clickCoords.y - cy, clickCoords.x - cx),
+          });
+          setIsDragging(true);
+          e.currentTarget.setPointerCapture(e.pointerId);
+          return;
+        }
+
+        const handleRadius = 5.5 * distanceScale;
+        if (Math.hypot(clickCoords.x - minX, clickCoords.y - maxY) < handleRadius) {
+          setTransformMode('scale-tl');
+          setTransformStart({ mouse: clickCoords, entities: JSON.parse(JSON.stringify(entities)), center: { x: cx, y: cy, cx, cy }, bbox: selectionBBox });
+          setIsDragging(true);
+          e.currentTarget.setPointerCapture(e.pointerId);
+          return;
+        }
+        if (Math.hypot(clickCoords.x - maxX, clickCoords.y - maxY) < handleRadius) {
+          setTransformMode('scale-tr');
+          setTransformStart({ mouse: clickCoords, entities: JSON.parse(JSON.stringify(entities)), center: { x: cx, y: cy, cx, cy }, bbox: selectionBBox });
+          setIsDragging(true);
+          e.currentTarget.setPointerCapture(e.pointerId);
+          return;
+        }
+        if (Math.hypot(clickCoords.x - minX, clickCoords.y - minY) < handleRadius) {
+          setTransformMode('scale-bl');
+          setTransformStart({ mouse: clickCoords, entities: JSON.parse(JSON.stringify(entities)), center: { x: cx, y: cy, cx, cy }, bbox: selectionBBox });
+          setIsDragging(true);
+          e.currentTarget.setPointerCapture(e.pointerId);
+          return;
+        }
+        if (Math.hypot(clickCoords.x - maxX, clickCoords.y - minY) < handleRadius) {
+          setTransformMode('scale-br');
+          setTransformStart({ mouse: clickCoords, entities: JSON.parse(JSON.stringify(entities)), center: { x: cx, y: cy, cx, cy }, bbox: selectionBBox });
+          setIsDragging(true);
+          e.currentTarget.setPointerCapture(e.pointerId);
+          return;
+        }
+
+        if (clickCoords.x >= minX && clickCoords.x <= maxX && clickCoords.y >= minY && clickCoords.y <= maxY) {
+          setTransformMode('translate');
+          setTransformStart({ mouse: clickCoords, entities: JSON.parse(JSON.stringify(entities)), center: { x: cx, y: cy, cx, cy }, bbox: selectionBBox });
+          setIsDragging(true);
+          e.currentTarget.setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+
+      const closest = findClosestEntity(clickCoords);
+      if (closest.index !== -1 && closest.dist < 5.5 * distanceScale) {
+        if (e.shiftKey) {
+          if (selectedEntityIndices.includes(closest.index)) {
+            setSelectedEntityIndices(selectedEntityIndices.filter(i => i !== closest.index));
+          } else {
+            setSelectedEntityIndices([...selectedEntityIndices, closest.index]);
+          }
+        } else {
+          setSelectedEntityIndices([closest.index]);
+        }
+        setIsDragging(true);
+        setLastPos({ x: e.clientX, y: e.clientY });
+        e.currentTarget.setPointerCapture(e.pointerId);
+        return;
+      }
+
+      setSelectedEntityIndices([]);
+      if (selectedTool === 'subregion-select') {
+        setSelectionMarquee({ start: clickCoords, end: clickCoords });
+      }
       setIsDragging(true);
       setLastPos({ x: e.clientX, y: e.clientY });
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -872,10 +1205,6 @@ export function DxfPreview({
         }
         onEntitiesChange(newEntities);
       }
-    } else if (selectedTool === 'subregion-select') {
-      setSubregionBox({ start: clickCoords, end: clickCoords });
-      setIsDragging(true);
-      e.currentTarget.setPointerCapture(e.pointerId);
     } else if (selectedTool === 'arc') {
       if (arcStep === 0) {
         setArcStart(clickCoords);
@@ -1085,7 +1414,7 @@ export function DxfPreview({
           });
 
           if (onRotateWorkspace) {
-            const angleDeg = -alpha * (180 / Math.PI);
+            const angleDeg = alpha * (180 / Math.PI);
             onRotateWorkspace(rotatedEntities, angleDeg, cx, cy);
           } else {
             onEntitiesChange(rotatedEntities, true);
@@ -1144,6 +1473,114 @@ export function DxfPreview({
       return;
     }
 
+    if (selectionMarquee && isDragging && rawCoords) {
+      const newMarquee = { start: selectionMarquee.start, end: rawCoords };
+      setSelectionMarquee(newMarquee);
+
+      const mMinX = Math.min(newMarquee.start.x, newMarquee.end.x);
+      const mMaxX = Math.max(newMarquee.start.x, newMarquee.end.x);
+      const mMinY = Math.min(newMarquee.start.y, newMarquee.end.y);
+      const mMaxY = Math.max(newMarquee.start.y, newMarquee.end.y);
+
+      if (mMaxX - mMinX > 0.5 || mMaxY - mMinY > 0.5) {
+        const selected = findEntitiesInBox({ minX: mMinX, minY: mMinY, maxX: mMaxX, maxY: mMaxY }, entities);
+        setSelectedEntityIndices(selected);
+      }
+      return;
+    }
+
+    if (transformMode && transformStart && rawCoords) {
+      if (transformMode === 'translate') {
+        const dx = rawCoords.x - transformStart.mouse.x;
+        const dy = rawCoords.y - transformStart.mouse.y;
+        const newEntities = [...entities];
+        selectedEntityIndices.forEach((idx) => {
+          const origEnt = transformStart.entities[idx];
+          if (!origEnt) return;
+          if (origEnt.type === 'circle' && origEnt.cx != null && origEnt.cy != null) {
+            newEntities[idx] = { ...origEnt, cx: origEnt.cx + dx, cy: origEnt.cy + dy };
+          } else if (origEnt.type === 'polyline' && origEnt.points) {
+            newEntities[idx] = {
+              ...origEnt,
+              points: origEnt.points.map((p) => [p[0] + dx, p[1] + dy]),
+            };
+          }
+        });
+        onEntitiesChange(newEntities, false);
+      } else if (transformMode === 'rotate') {
+        const { cx, cy } = transformStart.center;
+        const currentAngle = Math.atan2(rawCoords.y - cy, rawCoords.x - cx);
+        const deltaRad = currentAngle - (transformStart.startAngle || 0);
+
+        const cosA = Math.cos(deltaRad);
+        const sinA = Math.sin(deltaRad);
+
+        const newEntities = [...entities];
+        selectedEntityIndices.forEach((idx) => {
+          const origEnt = transformStart.entities[idx];
+          if (!origEnt) return;
+          if (origEnt.type === 'circle' && origEnt.cx != null && origEnt.cy != null) {
+            const rx = origEnt.cx - cx;
+            const ry = origEnt.cy - cy;
+            const nx = cx + rx * cosA - ry * sinA;
+            const ny = cy + rx * sinA + ry * cosA;
+            newEntities[idx] = { ...origEnt, cx: nx, cy: ny };
+          } else if (origEnt.type === 'polyline' && origEnt.points) {
+            newEntities[idx] = {
+              ...origEnt,
+              points: origEnt.points.map((p) => {
+                const rx = p[0] - cx;
+                const ry = p[1] - cy;
+                return [cx + rx * cosA - ry * sinA, cy + rx * sinA + ry * cosA];
+              }),
+            };
+          }
+        });
+        onEntitiesChange(newEntities, false);
+      } else if (transformMode.startsWith('scale')) {
+        const { cx, cy, width: origW, height: origH } = transformStart.bbox;
+        const origDistX = origW / 2;
+        const origDistY = origH / 2;
+
+        const currDistX = Math.abs(rawCoords.x - cx);
+        const currDistY = Math.abs(rawCoords.y - cy);
+
+        let scaleX = origDistX > 0.1 ? currDistX / origDistX : 1;
+        let scaleY = origDistY > 0.1 ? currDistY / origDistY : 1;
+
+        if (e.shiftKey) {
+          const uniScale = (scaleX + scaleY) / 2;
+          scaleX = uniScale;
+          scaleY = uniScale;
+        }
+
+        const newEntities = [...entities];
+        selectedEntityIndices.forEach((idx) => {
+          const origEnt = transformStart.entities[idx];
+          if (!origEnt) return;
+          if (origEnt.type === 'circle' && origEnt.cx != null && origEnt.cy != null && origEnt.r != null) {
+            const rx = origEnt.cx - cx;
+            const ry = origEnt.cy - cy;
+            const nx = cx + rx * scaleX;
+            const ny = cy + ry * scaleY;
+            const nr = Math.max(0.1, origEnt.r * ((scaleX + scaleY) / 2));
+            newEntities[idx] = { ...origEnt, cx: nx, cy: ny, r: nr };
+          } else if (origEnt.type === 'polyline' && origEnt.points) {
+            newEntities[idx] = {
+              ...origEnt,
+              points: origEnt.points.map((p) => {
+                const rx = p[0] - cx;
+                const ry = p[1] - cy;
+                return [cx + rx * scaleX, cy + ry * scaleY];
+              }),
+            };
+          }
+        });
+        onEntitiesChange(newEntities, false);
+      }
+      return;
+    }
+
     if (!isDragging) return;
 
     if (selectedTool === 'brush') {
@@ -1160,7 +1597,7 @@ export function DxfPreview({
       return;
     }
     
-    if (selectedTool === 'select') {
+    if (selectedTool === 'select' && !selectedEntityIndices.length) {
       const dx = e.clientX - lastPos.x;
       const dy = e.clientY - lastPos.y;
       if (svgRef.current) {
@@ -1195,6 +1632,14 @@ export function DxfPreview({
   };
 
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (transformMode) {
+      setTransformMode(null);
+      setTransformStart(null);
+      onEntitiesChange(entities, true);
+    }
+    if (selectionMarquee) {
+      setSelectionMarquee(null);
+    }
     if (selectedTool === 'subregion-select' && subregionBox) {
       const minX = Math.min(subregionBox.start.x, subregionBox.end.x);
       const maxX = Math.max(subregionBox.start.x, subregionBox.end.x);
@@ -1291,8 +1736,19 @@ export function DxfPreview({
   return (
     <section className="panel dxf-panel">
       <div className="panel-header">
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <h2>DXF Preview</h2>
+          <div style={{ display: 'flex', gap: '8px', fontSize: '11px', color: 'var(--muted)' }}>
+            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <input type="checkbox" checked={outerLayerEnabled} onChange={(e) => setOuterLayerEnabled(e.target.checked)} /> OUTER
+            </label>
+            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <input type="checkbox" checked={holeLayerEnabled} onChange={(e) => setHoleLayerEnabled(e.target.checked)} /> HOLES
+            </label>
+            <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <input type="checkbox" checked={detailsLayerEnabled} onChange={(e) => setDetailsLayerEnabled(e.target.checked)} /> DETAILS
+            </label>
+          </div>
         </div>
         <div className="mini-controls">
           <button onClick={onFitToView} title="Fit to view">Fit</button>
@@ -1302,30 +1758,6 @@ export function DxfPreview({
           <button onClick={onZoomIn} title="Zoom In">+</button>
           <button onClick={onZoomOut} title="Zoom Out">-</button>
         </div>
-      </div>
-
-      <div className="layer-row">
-        <label>
-          <input
-            type="checkbox"
-            checked={outerLayerEnabled}
-            onChange={(event) => setOuterLayerEnabled(event.target.checked)}
-          /> OUTER
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={holeLayerEnabled}
-            onChange={(event) => setHoleLayerEnabled(event.target.checked)}
-          /> HOLES
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={detailsLayerEnabled}
-            onChange={(event) => setDetailsLayerEnabled(event.target.checked)}
-          /> DETAILS
-        </label>
       </div>
 
       <div className="canvas-area">
@@ -1351,7 +1783,7 @@ export function DxfPreview({
             </div>
 
             {showGeometry ? (
-              <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+              <div ref={containerRef} style={{ position: 'relative', width: '100%', height: '100%' }}>
                 <canvas
                   ref={canvasRef}
                   style={{
@@ -1398,16 +1830,21 @@ export function DxfPreview({
                     </g>
                   )}
                   {(() => {
-                    const handleScale = Math.max(0.005, viewWidth / 350);
+                    const distanceScale = viewWidth / 300;
+                    const handleScale = distanceScale;
+                    const visualRadius = 2.5 * distanceScale;
+                    const grabRadius = visualRadius * 2.2;
+                    const nodeStrokeWidth = visualRadius * 0.25;
+
                     return (
                       <g transform="scale(1, -1)">
                         {hoveredCoord && (() => {
                           const cursorColor = activeHoverSource === 'image' ? '#ff9800' : '#00e676';
                           return (
                             <g transform={`translate(${hoveredCoord.x}, ${hoveredCoord.y})`} style={{ pointerEvents: 'none' }}>
-                              <circle r={Math.max(0.2, viewWidth / 250) * 3} fill="none" stroke={cursorColor} strokeWidth={Math.max(0.2, viewWidth / 250) * 0.4} />
-                              <line x1={-Math.max(0.2, viewWidth / 250) * 6} y1={0} x2={Math.max(0.2, viewWidth / 250) * 6} y2={0} stroke={cursorColor} strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
-                              <line x1={0} y1={-Math.max(0.2, viewWidth / 250) * 6} x2={0} y2={Math.max(0.2, viewWidth / 250) * 6} stroke={cursorColor} strokeWidth={Math.max(0.2, viewWidth / 250) * 0.3} />
+                              <circle r={visualRadius * 1.5} fill="none" stroke={cursorColor} strokeWidth={nodeStrokeWidth} />
+                              <line x1={-visualRadius * 3} y1={0} x2={visualRadius * 3} y2={0} stroke={cursorColor} strokeWidth={nodeStrokeWidth} />
+                              <line x1={0} y1={-visualRadius * 3} x2={0} y2={visualRadius * 3} stroke={cursorColor} strokeWidth={nodeStrokeWidth} />
                             </g>
                           );
                         })()}
@@ -1419,7 +1856,9 @@ export function DxfPreview({
 
                           const isHole = layer === 'HOLES';
                           const isDetail = layer === 'DETAILS';
-                          const color = isHole ? '#5b9bd5' : isDetail ? '#10b981' : '#ffffff';
+                          const isSelected = selectedEntityIndices.includes(entityIdx);
+                          const color = isSelected ? 'var(--accent)' : isHole ? '#5b9bd5' : isDetail ? '#10b981' : '#ffffff';
+                          const strokeWidth = isSelected ? nodeStrokeWidth * 2 : nodeStrokeWidth;
 
                           if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
                             return (
@@ -1430,7 +1869,7 @@ export function DxfPreview({
                                 r={entity.r}
                                 fill="none"
                                 stroke={color}
-                                strokeWidth={0.6 * handleScale}
+                                strokeWidth={strokeWidth}
                               />
                             );
                           } else if (entity.type === 'polyline' && entity.points && entity.points.length > 0) {
@@ -1441,7 +1880,7 @@ export function DxfPreview({
                                 d={d}
                                 fill="none"
                                 stroke={color}
-                                strokeWidth={0.6 * handleScale}
+                                strokeWidth={strokeWidth}
                               />
                             );
                           }
@@ -1458,27 +1897,46 @@ export function DxfPreview({
                             if (selectedTool === 'delete-point') return null;
                             return (
                               <g key={entityIdx}>
+                                {/* Center hit target */}
                                 <circle
                                   cx={entity.cx}
                                   cy={entity.cy}
-                                  r={2.4 * handleScale}
-                                  fill="var(--accent)"
-                                  stroke="white"
-                                  strokeWidth={0.4 * handleScale}
-                                  style={{ cursor: 'move' }}
+                                  r={grabRadius}
+                                  fill="transparent"
+                                  style={{ cursor: 'move', pointerEvents: 'all' }}
                                   onPointerDown={(e) => handleCircleCenterDragStart(e, entityIdx)}
                                   onPointerUp={handleHandlePointerUp}
                                 />
+                                {/* Center visual dot */}
+                                <circle
+                                  cx={entity.cx}
+                                  cy={entity.cy}
+                                  r={visualRadius}
+                                  fill="var(--accent)"
+                                  stroke="#ffffff"
+                                  strokeWidth={nodeStrokeWidth}
+                                  style={{ pointerEvents: 'none' }}
+                                />
+
+                                {/* Radius hit target */}
                                 <circle
                                   cx={entity.cx + entity.r}
                                   cy={entity.cy}
-                                  r={2.4 * handleScale}
-                                  fill="#ffcc00"
-                                  stroke="white"
-                                  strokeWidth={0.4 * handleScale}
-                                  style={{ cursor: 'ew-resize' }}
+                                  r={grabRadius}
+                                  fill="transparent"
+                                  style={{ cursor: 'ew-resize', pointerEvents: 'all' }}
                                   onPointerDown={(e) => handleCircleRadiusDragStart(e, entityIdx)}
                                   onPointerUp={handleHandlePointerUp}
+                                />
+                                {/* Radius visual dot */}
+                                <circle
+                                  cx={entity.cx + entity.r}
+                                  cy={entity.cy}
+                                  r={visualRadius}
+                                  fill="#ffcc00"
+                                  stroke="#ffffff"
+                                  strokeWidth={nodeStrokeWidth}
+                                  style={{ pointerEvents: 'none' }}
                                 />
                               </g>
                             );
@@ -1486,18 +1944,28 @@ export function DxfPreview({
                             return (
                               <g key={entityIdx}>
                                 {entity.points.map((pt, ptIdx) => (
-                                  <circle
-                                    key={ptIdx}
-                                    cx={pt[0]}
-                                    cy={pt[1]}
-                                    r={2.4 * handleScale}
-                                    fill={selectedTool === 'delete-point' ? '#ff3b30' : 'var(--accent)'}
-                                    stroke="white"
-                                    strokeWidth={0.3 * handleScale}
-                                    style={{ cursor: selectedTool === 'delete-point' ? 'pointer' : 'move' }}
-                                    onPointerDown={(e) => handleVertexPointerDown(e, entityIdx, ptIdx)}
-                                    onPointerUp={handleHandlePointerUp}
-                                  />
+                                  <g key={ptIdx}>
+                                    {/* Expanded hit target maintaining exact 2.2x ratio to visual node */}
+                                    <circle
+                                      cx={pt[0]}
+                                      cy={pt[1]}
+                                      r={grabRadius}
+                                      fill="transparent"
+                                      style={{ cursor: selectedTool === 'delete-point' ? 'pointer' : 'move', pointerEvents: 'all' }}
+                                      onPointerDown={(e) => handleVertexPointerDown(e, entityIdx, ptIdx)}
+                                      onPointerUp={handleHandlePointerUp}
+                                    />
+                                    {/* Distance-proportional visual vertex handle */}
+                                    <circle
+                                      cx={pt[0]}
+                                      cy={pt[1]}
+                                      r={visualRadius}
+                                      fill={selectedTool === 'delete-point' ? '#ff3b30' : 'var(--accent)'}
+                                      stroke="#ffffff"
+                                      strokeWidth={nodeStrokeWidth}
+                                      style={{ pointerEvents: 'none' }}
+                                    />
+                                  </g>
                                 ))}
                               </g>
                             );
@@ -1724,18 +2192,73 @@ export function DxfPreview({
                           />
                         )}
 
-                        {subregionBox && (
-                          <rect
-                            x={Math.min(subregionBox.start.x, subregionBox.end.x)}
-                            y={Math.min(subregionBox.start.y, subregionBox.end.y)}
-                            width={Math.abs(subregionBox.end.x - subregionBox.start.x)}
-                            height={Math.abs(subregionBox.end.y - subregionBox.start.y)}
-                            fill="rgba(255, 152, 0, 0.15)"
-                            stroke="#ff9800"
-                            strokeWidth={1.2 * handleScale}
-                            strokeDasharray="4,4"
-                          />
-                        )}
+                        {selectionMarquee && (() => {
+                          const mMinX = Math.min(selectionMarquee.start.x, selectionMarquee.end.x);
+                          const mMaxX = Math.max(selectionMarquee.start.x, selectionMarquee.end.x);
+                          const mMinY = Math.min(selectionMarquee.start.y, selectionMarquee.end.y);
+                          const mMaxY = Math.max(selectionMarquee.start.y, selectionMarquee.end.y);
+                          return (
+                            <rect
+                              x={mMinX}
+                              y={mMinY}
+                              width={mMaxX - mMinX}
+                              height={mMaxY - mMinY}
+                              fill="var(--accent-soft)"
+                              stroke="var(--accent)"
+                              strokeWidth={1.2 * handleScale}
+                              strokeDasharray="4,4"
+                            />
+                          );
+                        })()}
+
+                        {selectedEntityIndices.length > 0 && (() => {
+                          const bbox = computeBoundingBoxForIndices(selectedEntityIndices, entities);
+                          if (!bbox) return null;
+                          const { minX, minY, maxX, maxY, cx, cy, width, height } = bbox;
+                          const rotStemY = maxY + 18 * handleScale;
+                          const cornerR = 5 * handleScale;
+
+                          return (
+                            <g style={{ pointerEvents: 'auto' }}>
+                              <rect
+                                x={minX}
+                                y={minY}
+                                width={width}
+                                height={height}
+                                fill="rgba(227, 148, 64, 0.05)"
+                                stroke="var(--accent)"
+                                strokeWidth={1.2 * handleScale}
+                                strokeDasharray="5,5"
+                                style={{ cursor: 'move' }}
+                              />
+
+                              <line
+                                x1={cx}
+                                y1={maxY}
+                                x2={cx}
+                                y2={rotStemY}
+                                stroke="var(--accent)"
+                                strokeWidth={1.2 * handleScale}
+                              />
+                              <circle
+                                cx={cx}
+                                cy={rotStemY}
+                                r={cornerR * 1.2}
+                                fill="var(--accent)"
+                                stroke="var(--panel-dark)"
+                                strokeWidth={1.5 * handleScale}
+                                style={{ cursor: 'grab' }}
+                              />
+
+                              <circle cx={cx} cy={cy} r={2.5 * handleScale} fill="var(--accent)" />
+
+                              <rect x={minX - cornerR} y={maxY - cornerR} width={cornerR * 2} height={cornerR * 2} fill="var(--panel-header)" stroke="var(--accent)" strokeWidth={1.5 * handleScale} style={{ cursor: 'nwse-resize' }} />
+                              <rect x={maxX - cornerR} y={maxY - cornerR} width={cornerR * 2} height={cornerR * 2} fill="var(--panel-header)" stroke="var(--accent)" strokeWidth={1.5 * handleScale} style={{ cursor: 'nesw-resize' }} />
+                              <rect x={minX - cornerR} y={minY - cornerR} width={cornerR * 2} height={cornerR * 2} fill="var(--panel-header)" stroke="var(--accent)" strokeWidth={1.5 * handleScale} style={{ cursor: 'nesw-resize' }} />
+                              <rect x={maxX - cornerR} y={minY - cornerR} width={cornerR * 2} height={cornerR * 2} fill="var(--panel-header)" stroke="var(--accent)" strokeWidth={1.5 * handleScale} style={{ cursor: 'nwse-resize' }} />
+                            </g>
+                          );
+                        })()}
 
                         {arcStart && arcEnd && cursorMm && (
                           <path
@@ -2002,7 +2525,74 @@ export function DxfPreview({
             );
           })()}
         </svg>
-            </div>
+
+                {selectedEntityIndices.length > 0 && (() => {
+                  const bbox = computeBoundingBoxForIndices(selectedEntityIndices, entities);
+                  if (!bbox) return null;
+                  const containerW = containerRef.current?.clientWidth || 600;
+                  const containerH = containerRef.current?.clientHeight || 400;
+
+                  const rawX = ((bbox.cx - viewX) / viewWidth) * containerW;
+                  const rawY = ((-bbox.maxY - viewY) / viewHeight) * containerH;
+
+                  const barX = Math.max(140, Math.min(containerW - 140, rawX));
+                  const barY = Math.max(16, Math.min(containerH - 45, rawY - 45));
+
+                  return (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: `${barX}px`,
+                        top: `${barY}px`,
+                        transform: 'translate(-50%, 0)',
+                        zIndex: 20,
+                        pointerEvents: 'auto',
+                      }}
+                    >
+                      <div className="selection-action-bar">
+                        <span className="item-count">
+                          {selectedEntityIndices.length} {selectedEntityIndices.length === 1 ? 'item' : 'items'}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn-reprocess"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSubRegionSelect?.([bbox.minX, bbox.minY, bbox.maxX, bbox.maxY]);
+                          }}
+                          title="Rerun conversion on this selected area"
+                        >
+                          Reprocess Region
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-delete"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const newEntities = entities.filter((_, idx) => !selectedEntityIndices.includes(idx));
+                            onEntitiesChange(newEntities, true);
+                            setSelectedEntityIndices([]);
+                          }}
+                          title="Delete selected elements"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-clear"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedEntityIndices([]);
+                          }}
+                          title="Clear Selection"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
           ) : result ? (
               <div className="empty-state">
                 <strong>Processing DXF</strong>

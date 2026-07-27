@@ -645,8 +645,8 @@ export default function App() {
                         if (ent.type === 'circle' && ent.cx != null && ent.cy != null) {
                           return !(ent.cx >= minX && ent.cx <= maxX && ent.cy >= minY && ent.cy <= maxY);
                         } else if (ent.type === 'polyline' && ent.points) {
-                          const allInside = ent.points.every(p => p[0] >= minX && p[0] <= maxX && p[1] >= minY && p[1] <= maxY);
-                          return !allInside;
+                          const hasPointInside = ent.points.some(p => p[0] >= minX && p[0] <= maxX && p[1] >= minY && p[1] <= maxY);
+                          return !hasPointInside;
                         }
                         return true;
                       });
