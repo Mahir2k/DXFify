@@ -197,33 +197,10 @@ export function ImagePreview({
   const w = activeViewport.w;
   const h = activeViewport.h;
 
-  const { imgX, imgY, imgW, imgH } = (() => {
-    if (selectedTab === 'original' && homographyH) {
-      const p1 = dxfModelToImagePixels(x, y + h);
-      const p2 = dxfModelToImagePixels(x + w, y + h);
-      const p3 = dxfModelToImagePixels(x, y);
-      const p4 = dxfModelToImagePixels(x + w, y);
-
-      const minX = Math.min(p1[0], p2[0], p3[0], p4[0]);
-      const maxX = Math.max(p1[0], p2[0], p3[0], p4[0]);
-      const minY = Math.min(p1[1], p2[1], p3[1], p4[1]);
-      const maxY = Math.max(p1[1], p2[1], p3[1], p4[1]);
-
-      return {
-        imgX: minX,
-        imgY: minY,
-        imgW: Math.max(1, maxX - minX),
-        imgH: Math.max(1, maxY - minY),
-      };
-    }
-
-    return {
-      imgX: x * scale,
-      imgY: (paperH - (y + h)) * scale,
-      imgW: w * scale,
-      imgH: h * scale,
-    };
-  })();
+  const imgX = x * scale;
+  const imgY = height + y * scale;
+  const imgW = w * scale;
+  const imgH = h * scale;
 
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     setIsDragging(true);
@@ -243,26 +220,15 @@ export function ImagePreview({
           const dxPx = dx * inv.a;
           const dyPx = dy * inv.d;
 
-          if (selectedTab === 'original' && homographyH_inv) {
-            const centerPx = (imgX + imgW / 2) - dxPx;
-            const centerPy = (imgY + imgH / 2) - dyPx;
-            const newCenter = imagePixelsToDxfModel(centerPx, centerPy);
-            onViewportChange({
-              x: newCenter.x - w / 2,
-              y: newCenter.y - h / 2,
-              w: w,
-              h: h,
-            });
-          } else {
-            const newImgX = imgX - dxPx;
-            const newImgY = imgY - dyPx;
-            onViewportChange({
-              x: newImgX / scale,
-              y: paperH - (newImgY + imgH) / scale,
-              w: w,
-              h: h,
-            });
-          }
+          const newImgX = imgX - dxPx;
+          const newImgY = imgY - dyPx;
+
+          onViewportChange({
+            x: newImgX / scale,
+            y: (newImgY - height) / scale,
+            w: w,
+            h: h,
+          });
         }
       }
       setLastPos({ x: e.clientX, y: e.clientY });
@@ -311,22 +277,23 @@ export function ImagePreview({
         pt.y = e.clientY;
         const transformed = pt.matrixTransform(ctm.inverse());
 
-        const modelPt = imagePixelsToDxfModel(transformed.x, transformed.y);
+        const cxPx = transformed.x;
+        const cyPx = transformed.y;
 
-        const newW = Math.max(1, w / zoomFactor);
-        const newH = Math.max(1, h / zoomFactor);
+        const newW = Math.max(10, Math.min(100000, imgW / zoomFactor));
+        const newH = Math.max(10, Math.min(100000, imgH / zoomFactor));
 
-        const relX = (modelPt.x - x) / w;
-        const relY = (modelPt.y - y) / h;
+        const relX = (cxPx - imgX) / imgW;
+        const relY = (cyPx - imgY) / imgH;
 
-        const newX = modelPt.x - relX * newW;
-        const newY = modelPt.y - relY * newH;
+        const newX = cxPx - relX * newW;
+        const newY = cyPx - relY * newH;
 
         onViewportChange({
-          x: newX,
-          y: newY,
-          w: newW,
-          h: newH,
+          x: newX / scale,
+          y: (newY - height) / scale,
+          w: newW / scale,
+          h: newH / scale,
         });
       }
     }
