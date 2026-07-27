@@ -1120,7 +1120,7 @@ export function DxfPreview({
       }
     } else if (selectedTool === 'centerline') {
       const closest = findClosestEntity(clickCoords);
-      if (closest.index !== -1 && closest.dist < 10.0) {
+      if (closest.index !== -1 && closest.dist < 15.0) {
         const target = entities[closest.index];
         if (target.type === 'circle' && target.cx != null && target.cy != null && target.r != null) {
           const rExt = target.r * 1.25;
@@ -1129,6 +1129,61 @@ export function DxfPreview({
             { type: 'polyline', layer: 'DETAILS', points: [[target.cx - rExt, target.cy], [target.cx + rExt, target.cy]], closed: false },
             { type: 'polyline', layer: 'DETAILS', points: [[target.cx, target.cy - rExt], [target.cx, target.cy + rExt]], closed: false },
           ]);
+        } else if (target.type === 'polyline' && target.points && target.points.length > 0) {
+          if (target.points.length === 2 && !target.closed) {
+            const [p1, p2] = target.points;
+            const mx = (p1[0] + p2[0]) / 2;
+            const my = (p1[1] + p2[1]) / 2;
+            const dx = p2[0] - p1[0];
+            const dy = p2[1] - p1[1];
+            const len = Math.hypot(dx, dy);
+
+            if (len > 1e-4) {
+              const ux = dx / len;
+              const uy = dy / len;
+              const ext = (len / 2) * 1.25;
+              const perpExt = Math.max(3.0, len * 0.25);
+
+              const lineAlong: [number, number][] = [
+                [mx - ux * ext, my - uy * ext],
+                [mx + ux * ext, my + uy * ext],
+              ];
+
+              const linePerp: [number, number][] = [
+                [mx + uy * perpExt, my - ux * perpExt],
+                [mx - uy * perpExt, my + ux * perpExt],
+              ];
+
+              onEntitiesChange([
+                ...entities,
+                { type: 'polyline', layer: 'DETAILS', points: lineAlong, closed: false },
+                { type: 'polyline', layer: 'DETAILS', points: linePerp, closed: false },
+              ]);
+            }
+          } else {
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            for (const pt of target.points) {
+              if (pt[0] < minX) minX = pt[0];
+              if (pt[0] > maxX) maxX = pt[0];
+              if (pt[1] < minY) minY = pt[1];
+              if (pt[1] > maxY) maxY = pt[1];
+            }
+
+            const cx = (minX + maxX) / 2;
+            const cy = (minY + maxY) / 2;
+            const w = maxX - minX;
+            const h = maxY - minY;
+
+            const extX = Math.max(3.0, (w / 2) * 1.25);
+            const extY = Math.max(3.0, (h / 2) * 1.25);
+
+            onEntitiesChange([
+              ...entities,
+              { type: 'polyline', layer: 'DETAILS', points: [[cx - extX, cy], [cx + extX, cy]], closed: false },
+              { type: 'polyline', layer: 'DETAILS', points: [[cx, cy - extY], [cx, cy + extY]], closed: false },
+            ]);
+          }
         }
       }
     } else if (selectedTool === 'cut') {
