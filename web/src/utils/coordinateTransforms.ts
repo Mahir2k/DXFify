@@ -144,9 +144,10 @@ export function imagePixelsToDxfModel(
     paperH: number;
     selectedTab: string;
     homographyH_inv: number[] | null;
+    rotationTransforms?: RotationStep[];
   }
 ): { x: number; y: number } {
-  const { scale, paperH, selectedTab, homographyH_inv } = options;
+  const { scale, paperH, selectedTab, homographyH_inv, rotationTransforms } = options;
   let px = px_in;
   let py = py_in;
 
@@ -156,7 +157,18 @@ export function imagePixelsToDxfModel(
     py = unWarpY;
   }
 
-  const mx = px / scale;
-  const my = paperH - py / scale;
+  let mx = px / scale;
+  let my = paperH - py / scale;
+
+  if (selectedTab === 'original' && homographyH_inv && rotationTransforms) {
+    for (const t of rotationTransforms) {
+      const rad = t.angle * (Math.PI / 180);
+      const dx = mx - t.cx;
+      const dy = my - t.cy;
+      mx = t.cx + dx * Math.cos(rad) - dy * Math.sin(rad);
+      my = t.cy + dx * Math.sin(rad) + dy * Math.cos(rad);
+    }
+  }
+
   return { x: mx, y: my };
 }

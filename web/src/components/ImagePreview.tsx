@@ -177,13 +177,13 @@ export function ImagePreview({
   })();
 
   const totalMatrix = composeRotationTransforms(rotationTransforms);
-  const imageSvgMatrix = getSvgImageMatrix(totalMatrix, scale, paperH);
+  const imageSvgMatrix = selectedTab === 'original' ? undefined : getSvgImageMatrix(totalMatrix, scale, paperH);
 
   const dxfModelToImagePixels = (x_mm: number, y_mm: number): [number, number] =>
     helperDxfModelToImagePixels(x_mm, y_mm, { scale, paperH, selectedTab, homographyH, rotationTransforms });
 
   const imagePixelsToDxfModel = (px: number, py: number): { x: number; y: number } =>
-    helperImagePixelsToDxfModel(px, py, { scale, paperH, selectedTab, homographyH_inv });
+    helperImagePixelsToDxfModel(px, py, { scale, paperH, selectedTab, homographyH_inv, rotationTransforms });
 
   const activeViewport = viewport || {
     x: 0,
