@@ -13,7 +13,7 @@ DXFify converts a single photograph of a flat object lying on a sheet with ArUco
 - **`render_dxf.py`**: Generates high-fidelity preview images from DXF coordinates to overlay vectors on top of original raster previews.
 
 ### Node/Express Server (`web/server/`)
-- **`index.ts`**: Express backend (default port 3000) that handles multipart image uploads, manages job isolation under the `web/uploads/` folder, and relays conversion parameters to the Python server.
+- **`index.ts`**: Express backend (default port 8787) that handles multipart image uploads, manages isolated job folders under `web/uploads/jobs/`, starts or talks to the Python worker, and exposes generated artifacts through `/api/jobs/:jobId/<filename>`.
 
 ### React Client (`web/src/`)
 - **`App.tsx`**: Application state container. Manages history stacks (undo/redo), active geometries, zoom states, tool selections, and image uploads.
@@ -39,6 +39,8 @@ pip install -r requirements.txt
 python3 pipeline_worker.py
 ```
 
+Requires OpenCV 4.7+ built with the `opencv_contrib` `aruco` module.
+
 ### 2. Frontend Dashboard
 Required: Node.js 18+.
 
@@ -47,6 +49,28 @@ cd web
 npm install
 npm run dev
 ```
+
+`npm run dev` starts the Python worker, the Express API, and the Vite client together. The Vite frontend runs on `http://localhost:5173` and proxies API calls to the Express server on `http://localhost:8787`.
+
+If you run the Python worker separately, the Express server talks to `http://127.0.0.1:8788` by default. Override that worker address with `DXFERPY_URL`:
+
+```bash
+cd web
+DXFERPY_URL=http://127.0.0.1:8788 npm run dev:server
+```
+
+For frontend-only development without the Python worker:
+
+```bash
+cd web
+DXFER_MOCK=1 npm run dev
+```
+
+The main conversion endpoint is `POST /api/convert`. It accepts a multipart image upload and options such as segmentation method, pixels/mm, marker size, sheet size, arc fitting, right-angle snapping, and contour thresholds. Successful jobs return links for `result.dxf`, `result.dbg.png`, `result.json`, and any extra generated preview or mask artifacts.
+
+If `dxferpy/render_dxf.py` and its Python dependencies are available, the API also tries to render `result.preview.png` from the generated DXF. Preview rendering is best-effort: a render failure is logged as a warning and does not fail the conversion.
+
+Each conversion is stored in a unique job folder under `web/uploads/jobs/`. The uploaded source image, generated DXF, debug image, JSON report, preview image, and masks stay together in that folder. Job artifacts are served through `/api/jobs/:jobId/<filename>` with path traversal checks so requests cannot escape the jobs directory.
 
 ---
 
