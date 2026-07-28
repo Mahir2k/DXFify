@@ -1,67 +1,52 @@
-"""Primary entry point for the DXFify PyQt6 Native CAD Desktop Application."""
+"""Primary entry point for the DXFify Standalone Desktop Application using pywebview."""
 
 import multiprocessing
 import os
 import sys
+import time
+import urllib.request
+import webview
 
 # Call freeze_support immediately for PyInstaller binary safety
 multiprocessing.freeze_support()
 
-# Ensure project root is in sys.path
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-DXFERPY_DIR = os.path.join(REPO_ROOT, "dxferpy")
-if DXFERPY_DIR not in sys.path:
-    sys.path.insert(0, DXFERPY_DIR)
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QPalette
-from PyQt6.QtWidgets import QApplication
-
-from desktop.ui.main_window import MainWindow
-
-
-def set_dark_theme(app: QApplication) -> None:
-    """Applies modern dark slate palette and custom typography."""
-    app.setStyle("Fusion")
-
-    palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window, QColor("#0a0e17"))
-    palette.setColor(QPalette.ColorRole.WindowText, QColor("#e2e8f0"))
-    palette.setColor(QPalette.ColorRole.Base, QColor("#12161f"))
-    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#1e293b"))
-    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#1e293b"))
-    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.Text, QColor("#e2e8f0"))
-    palette.setColor(QPalette.ColorRole.Button, QColor("#1e293b"))
-    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.BrightText, QColor("#ff3b30"))
-    palette.setColor(QPalette.ColorRole.Link, QColor("#6366f1"))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor("#6366f1"))
-    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-
-    app.setPalette(palette)
-
-    font = QFont("Inter", 10)
-    font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
-    app.setFont(font)
+def wait_for_server(url: str, timeout: int = 15) -> bool:
+    """Waits for local gateway server to become responsive."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            with urllib.request.urlopen(url) as response:
+                if response.status == 200:
+                    return True
+        except Exception:
+            time.sleep(0.2)
+    return False
 
 
 def main() -> None:
-    """Main application loop."""
-    app = QApplication(sys.argv)
-    app.setApplicationName("DXFify")
-    app.setOrganizationName("DXFify")
+    """Launches standalone native desktop window rendering exact React CAD dashboard."""
+    target_url = "http://127.0.0.1:3001"
 
-    set_dark_theme(app)
+    # Wait up to 10 seconds for local web server
+    wait_for_server(target_url, timeout=10)
 
-    # Launch GUI window instantly (<100ms startup)
-    window = MainWindow(rembg_session=None)
-    window.show()
+    # Create native standalone desktop app window (0 browser dependency)
+    window = webview.create_window(
+        title="DXFify — Professional CAD Vectorizer",
+        url=target_url,
+        width=1400,
+        height=900,
+        min_size=(900, 600),
+        resizable=True,
+        text_select=False,
+    )
 
-    sys.exit(app.exec())
+    webview.start(private_mode=False)
 
 
 if __name__ == "__main__":
