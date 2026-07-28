@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 import sys
 import os
+from PyInstaller.utils.hooks import copy_metadata
 
 block_cipher = None
 
@@ -10,6 +11,13 @@ dxferpy_dir = os.path.join(repo_root, "dxferpy")
 datas = [
     (os.path.join(dxferpy_dir, "samples"), "dxferpy/samples"),
 ]
+
+# Copy package metadata for pymatting, rembg, and dependencies to prevent PackageNotFoundError
+for pkg_name in ['pymatting', 'rembg', 'torch', 'onnxruntime', 'ezdxf', 'scipy', 'numpy', 'opencv-python']:
+    try:
+        datas += copy_metadata(pkg_name)
+    except Exception:
+        pass
 
 hiddenimports = [
     'PyQt6',
@@ -22,8 +30,10 @@ hiddenimports = [
     'scipy',
     'scipy.interpolate',
     'rembg',
+    'pymatting',
     'onnxruntime',
     'flask',
+    'importlib.metadata',
 ]
 
 a = Analysis(

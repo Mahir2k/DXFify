@@ -6,14 +6,11 @@ import traceback
 from typing import Any, Dict, Optional
 from PyQt6.QtCore import QThread, pyqtSignal
 
-# Import CV modules from dxferpy
+# Ensure DXFERPY_DIR is in sys.path
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DXFERPY_DIR = os.path.join(REPO_ROOT, "dxferpy")
 if DXFERPY_DIR not in sys.path:
     sys.path.insert(0, DXFERPY_DIR)
-
-from segment_object import create_birefnet_session
-from pipeline_worker import run_pipeline
 
 
 class PipelineWorkerThread(QThread):
@@ -41,6 +38,11 @@ class PipelineWorkerThread(QThread):
         """Executes full computer vision pipeline."""
         try:
             self.started_processing.emit()
+
+            # Lazy import CV modules inside worker thread
+            from segment_object import create_birefnet_session
+            from pipeline_worker import run_pipeline
+
             if self.session is None:
                 self.session = create_birefnet_session()
             paper_size = self.params.pop("paperSize", "a4")
