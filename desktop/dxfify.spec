@@ -7,32 +7,32 @@ block_cipher = None
 
 repo_root = os.path.dirname(os.path.dirname(os.path.abspath(SPEC)))
 dxferpy_dir = os.path.join(repo_root, "dxferpy")
+web_dist_dir = os.path.join(repo_root, "web", "dist")
 
 datas = [
     (os.path.join(dxferpy_dir, "samples"), "dxferpy/samples"),
 ]
 
-# Copy package metadata for pymatting, rembg, and dependencies to prevent PackageNotFoundError
-for pkg_name in ['pymatting', 'rembg', 'torch', 'onnxruntime', 'ezdxf', 'scipy', 'numpy', 'opencv-python']:
+if os.path.exists(web_dist_dir):
+    datas.append((web_dist_dir, "web/dist"))
+
+for pkg_name in ['pymatting', 'rembg', 'torch', 'onnxruntime', 'ezdxf', 'pywebview', 'bottle']:
     try:
         datas += copy_metadata(pkg_name)
     except Exception:
         pass
 
 hiddenimports = [
-    'PyQt6',
-    'PyQt6.QtCore',
-    'PyQt6.QtGui',
-    'PyQt6.QtWidgets',
+    'pywebview',
+    'bottle',
+    'proxy_tools',
     'cv2',
     'ezdxf',
     'numpy',
     'scipy',
-    'scipy.interpolate',
     'rembg',
     'pymatting',
     'onnxruntime',
-    'flask',
     'importlib.metadata',
 ]
 
