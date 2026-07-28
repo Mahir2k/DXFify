@@ -50,7 +50,6 @@ class CadToolBar(QToolBar):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__("CAD Tools", parent)
-        self.setOrientation(self.orientation())
         self.setIconSize(QSize(28, 28))
         self.setStyleSheet("""
             QToolBar {

@@ -1,7 +1,7 @@
 """PyQt6 Dock Widget providing AI pipeline configuration, paper specs, and threshold sliders."""
 
 from typing import Dict, Any, Optional
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,7 +27,7 @@ class SettingsDock(QDockWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__("Pipeline & Layer Settings", parent)
-        self.setAllowedAreas(self.dockWidgetArea().RightDockWidgetArea | self.dockWidgetArea().LeftDockWidgetArea)
+        self.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea)
 
         content = QWidget()
         main_layout = QVBoxLayout(content)
@@ -49,7 +49,7 @@ class SettingsDock(QDockWidget):
         seg_layout = QFormLayout(seg_group)
 
         self.thresh_slider = QSlider()
-        self.thresh_slider.setOrientation(self.thresh_slider.orientation().Horizontal)
+        self.thresh_slider.setOrientation(Qt.Orientation.Horizontal)
         self.thresh_slider.setRange(100, 255)
         self.thresh_slider.setValue(240)
         self.thresh_label = QLabel("240")
