@@ -46,7 +46,7 @@ def main() -> None:
         text_select=False,
     )
 
-    webview.start(private_mode=False)
+    webview.start(gui='qt', private_mode=False)
 
 
 if __name__ == "__main__":

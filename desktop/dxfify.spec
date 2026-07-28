@@ -16,7 +16,7 @@ datas = [
 if os.path.exists(web_dist_dir):
     datas.append((web_dist_dir, "web/dist"))
 
-for pkg_name in ['pymatting', 'rembg', 'torch', 'onnxruntime', 'ezdxf', 'pywebview', 'bottle']:
+for pkg_name in ['pymatting', 'rembg', 'torch', 'onnxruntime', 'ezdxf', 'pywebview', 'bottle', 'qtpy', 'PyQt6', 'PyQt6-WebEngine']:
     try:
         datas += copy_metadata(pkg_name)
     except Exception:
@@ -24,8 +24,17 @@ for pkg_name in ['pymatting', 'rembg', 'torch', 'onnxruntime', 'ezdxf', 'pywebvi
 
 hiddenimports = [
     'pywebview',
+    'webview',
+    'webview.platforms.qt',
+    'qtpy',
     'bottle',
     'proxy_tools',
+    'PyQt6',
+    'PyQt6.QtCore',
+    'PyQt6.QtGui',
+    'PyQt6.QtWidgets',
+    'PyQt6.QtWebEngineWidgets',
+    'PyQt6.QtWebEngineCore',
     'cv2',
     'ezdxf',
     'numpy',
