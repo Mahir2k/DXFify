@@ -177,7 +177,7 @@ export function ImagePreview({
   })();
 
   const totalMatrix = composeRotationTransforms(rotationTransforms);
-  const imageSvgMatrix = selectedTab === 'original' ? undefined : getSvgImageMatrix(totalMatrix, scale, paperH);
+  const imageSvgMatrix = getSvgImageMatrix(totalMatrix, scale, paperH);
 
   const dxfModelToImagePixels = (x_mm: number, y_mm: number): [number, number] =>
     helperDxfModelToImagePixels(x_mm, y_mm, { scale, paperH, selectedTab, homographyH, rotationTransforms });
@@ -197,10 +197,43 @@ export function ImagePreview({
   const w = activeViewport.w;
   const h = activeViewport.h;
 
-  const imgX = x * scale;
-  const imgY = height + y * scale;
-  const imgW = w * scale;
-  const imgH = h * scale;
+  const { imgX, imgY, imgW, imgH } = (() => {
+    // Get viewport corners in child space (unrotated pixels)
+    const p1 = dxfModelToImagePixels(x, -y);
+    const p2 = dxfModelToImagePixels(x + w, -y);
+    const p3 = dxfModelToImagePixels(x, -y - h);
+    const p4 = dxfModelToImagePixels(x + w, -y - h);
+
+    // Transform child-space corners to SVG root space via imageSvgMatrix
+    const ma = totalMatrix.cos;
+    const mb = -totalMatrix.sin;
+    const mc = totalMatrix.sin;
+    const md = totalMatrix.cos;
+    const me = totalMatrix.tx * scale - totalMatrix.sin * paperH * scale;
+    const mf = (1 - totalMatrix.cos) * paperH * scale - totalMatrix.ty * scale;
+
+    const toRoot = (px: number, py: number): [number, number] => [
+      ma * px + mc * py + me,
+      mb * px + md * py + mf,
+    ];
+
+    const r1 = toRoot(p1[0], p1[1]);
+    const r2 = toRoot(p2[0], p2[1]);
+    const r3 = toRoot(p3[0], p3[1]);
+    const r4 = toRoot(p4[0], p4[1]);
+
+    const minX = Math.min(r1[0], r2[0], r3[0], r4[0]);
+    const maxX = Math.max(r1[0], r2[0], r3[0], r4[0]);
+    const minY = Math.min(r1[1], r2[1], r3[1], r4[1]);
+    const maxY = Math.max(r1[1], r2[1], r3[1], r4[1]);
+
+    return {
+      imgX: minX,
+      imgY: minY,
+      imgW: Math.max(1, maxX - minX),
+      imgH: Math.max(1, maxY - minY),
+    };
+  })();
 
   const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     setIsDragging(true);
@@ -213,19 +246,26 @@ export function ImagePreview({
       const dx = e.clientX - lastPos.x;
       const dy = e.clientY - lastPos.y;
 
-      if (svgRef.current) {
-        const ctm = svgRef.current.getScreenCTM();
+      const targetGroup = gRef.current || svgRef.current;
+      if (targetGroup) {
+        const ctm = targetGroup.getScreenCTM();
         if (ctm) {
           const inv = ctm.inverse();
-          const dxPx = dx * inv.a;
-          const dyPx = dy * inv.d;
+          // Full 2D affine transform to map screen deltas to child (unrotated pixel) space
+          const dxPx = dx * inv.a + dy * inv.c;
+          const dyPx = dx * inv.b + dy * inv.d;
 
-          const newImgX = imgX - dxPx;
-          const newImgY = imgY - dyPx;
+          const currentCenterX = x + w / 2;
+          const currentCenterY = -y - h / 2;
+          const [currentPx, currentPy] = dxfModelToImagePixels(currentCenterX, currentCenterY);
 
+          const targetPx = currentPx - dxPx;
+          const targetPy = currentPy - dyPx;
+
+          const newCenter = imagePixelsToDxfModel(targetPx, targetPy);
           onViewportChange({
-            x: newImgX / scale,
-            y: (newImgY - height) / scale,
+            x: newCenter.x - w / 2,
+            y: -(newCenter.y + h / 2),
             w: w,
             h: h,
           });
@@ -268,32 +308,33 @@ export function ImagePreview({
   const handleWheel = (e: React.WheelEvent<SVGSVGElement>) => {
     const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
 
-    if (svgRef.current) {
-      const svg = svgRef.current;
-      const ctm = svg.getScreenCTM();
+    // Use gRef CTM to get cursor position in child (unrotated pixel) space
+    const targetGroup = gRef.current || svgRef.current;
+    if (targetGroup && svgRef.current) {
+      const ctm = targetGroup.getScreenCTM();
       if (ctm) {
-        const pt = svg.createSVGPoint();
+        const pt = svgRef.current.createSVGPoint();
         pt.x = e.clientX;
         pt.y = e.clientY;
         const transformed = pt.matrixTransform(ctm.inverse());
 
-        const cxPx = transformed.x;
-        const cyPx = transformed.y;
+        const modelPt = imagePixelsToDxfModel(transformed.x, transformed.y);
 
-        const newW = Math.max(10, Math.min(100000, imgW / zoomFactor));
-        const newH = Math.max(10, Math.min(100000, imgH / zoomFactor));
+        const newW = Math.max(0.1, Math.min(50000, w / zoomFactor));
+        const newH = Math.max(0.1, Math.min(50000, h / zoomFactor));
 
-        const relX = (cxPx - imgX) / imgW;
-        const relY = (cyPx - imgY) / imgH;
+        const relX = (modelPt.x - x) / w;
+        const topModelY = -y;
+        const relYFromTop = (topModelY - modelPt.y) / h;
 
-        const newX = cxPx - relX * newW;
-        const newY = cyPx - relY * newH;
+        const newX = modelPt.x - relX * newW;
+        const newTopModelY = modelPt.y + relYFromTop * newH;
 
         onViewportChange({
-          x: newX / scale,
-          y: (newY - height) / scale,
-          w: newW / scale,
-          h: newH / scale,
+          x: newX,
+          y: -newTopModelY,
+          w: newW,
+          h: newH,
         });
       }
     }
@@ -388,117 +429,117 @@ export function ImagePreview({
                       })}
                     </g>
                   )}
-                </g>
 
-                <g ref={gRef} style={{ opacity: 0.8, pointerEvents: 'none' }}>
-                  {entities.map((entity, idx) => {
-                    const isHole = entity.layer === 'HOLES';
-                    const color = isHole ? '#ff3b30' : '#00e5ff';
-                    if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
-                      if (selectedTab === 'original' && homographyH) {
-                        const numPts = 32;
-                        const pts: string[] = [];
-                        for (let i = 0; i < numPts; i++) {
-                          const theta = (i * 2 * Math.PI) / numPts;
-                          const rx = entity.cx + entity.r * Math.cos(theta);
-                          const ry = entity.cy + entity.r * Math.sin(theta);
-                          const [mx, my] = dxfModelToImagePixels(rx, ry);
-                          pts.push(`${mx.toFixed(2)},${my.toFixed(2)}`);
+                  <g ref={gRef} style={{ opacity: 0.8, pointerEvents: 'none' }}>
+                    {entities.map((entity, idx) => {
+                      const isHole = entity.layer === 'HOLES';
+                      const color = isHole ? '#ff3b30' : '#00e5ff';
+                      if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
+                        if (selectedTab === 'original' && homographyH) {
+                          const numPts = 32;
+                          const pts: string[] = [];
+                          for (let i = 0; i < numPts; i++) {
+                            const theta = (i * 2 * Math.PI) / numPts;
+                            const rx = entity.cx + entity.r * Math.cos(theta);
+                            const ry = entity.cy + entity.r * Math.sin(theta);
+                            const [mx, my] = dxfModelToImagePixels(rx, ry);
+                            pts.push(`${mx.toFixed(2)},${my.toFixed(2)}`);
+                          }
+                          return (
+                            <polygon
+                              key={idx}
+                              points={pts.join(' ')}
+                              fill="none"
+                              stroke={color}
+                              strokeWidth={1.2 * (imgW / 400)}
+                            />
+                          );
                         }
+                        const [cx, cy] = dxfModelToImagePixels(entity.cx, entity.cy);
                         return (
-                          <polygon
+                          <circle
                             key={idx}
-                            points={pts.join(' ')}
+                            cx={cx}
+                            cy={cy}
+                            r={entity.r * scale}
+                            fill="none"
+                            stroke={color}
+                            strokeWidth={1.2 * (imgW / 400)}
+                          />
+                        );
+                      } else if (entity.type === 'polyline' && entity.points) {
+                        const d = entity.points.map((p, i) => {
+                          const [mx, my] = dxfModelToImagePixels(p[0], p[1]);
+                          return `${i === 0 ? 'M' : 'L'}${mx.toFixed(2)} ${my.toFixed(2)}`;
+                        }).join(' ') + (entity.closed ? ' Z' : '');
+                        return (
+                          <path
+                            key={idx}
+                            d={d}
                             fill="none"
                             stroke={color}
                             strokeWidth={1.2 * (imgW / 400)}
                           />
                         );
                       }
-                      const [cx, cy] = dxfModelToImagePixels(entity.cx, entity.cy);
-                      return (
-                        <circle
-                          key={idx}
-                          cx={cx}
-                          cy={cy}
-                          r={entity.r * scale}
-                          fill="none"
-                          stroke={color}
-                          strokeWidth={1.2 * (imgW / 400)}
-                        />
-                      );
-                    } else if (entity.type === 'polyline' && entity.points) {
-                      const d = entity.points.map((p, i) => {
-                        const [mx, my] = dxfModelToImagePixels(p[0], p[1]);
-                        return `${i === 0 ? 'M' : 'L'}${mx.toFixed(2)} ${my.toFixed(2)}`;
-                      }).join(' ') + (entity.closed ? ' Z' : '');
-                      return (
-                        <path
-                          key={idx}
-                          d={d}
-                          fill="none"
-                          stroke={color}
-                          strokeWidth={1.2 * (imgW / 400)}
-                        />
-                      );
-                    }
-                    return null;
-                  })}
-                  {activeDrawing && (() => {
-                    const color = '#ff9800';
-                    if (activeDrawing.type === 'circle' && activeDrawing.cx != null && activeDrawing.cy != null && activeDrawing.r != null) {
-                      if (selectedTab === 'original' && homographyH) {
-                        const numPts = 32;
-                        const pts: string[] = [];
-                        for (let i = 0; i < numPts; i++) {
-                          const theta = (i * 2 * Math.PI) / numPts;
-                          const rx = activeDrawing.cx + activeDrawing.r * Math.cos(theta);
-                          const ry = activeDrawing.cy + activeDrawing.r * Math.sin(theta);
-                          const [mx, my] = dxfModelToImagePixels(rx, ry);
-                          pts.push(`${mx.toFixed(2)},${my.toFixed(2)}`);
+                      return null;
+                    })}
+                    {activeDrawing && (() => {
+                      const color = '#ff9800';
+                      if (activeDrawing.type === 'circle' && activeDrawing.cx != null && activeDrawing.cy != null && activeDrawing.r != null) {
+                        if (selectedTab === 'original' && homographyH) {
+                          const numPts = 32;
+                          const pts: string[] = [];
+                          for (let i = 0; i < numPts; i++) {
+                            const theta = (i * 2 * Math.PI) / numPts;
+                            const rx = activeDrawing.cx + activeDrawing.r * Math.cos(theta);
+                            const ry = activeDrawing.cy + activeDrawing.r * Math.sin(theta);
+                            const [mx, my] = dxfModelToImagePixels(rx, ry);
+                            pts.push(`${mx.toFixed(2)},${my.toFixed(2)}`);
+                          }
+                          return <polygon points={pts.join(' ')} fill="none" stroke={color} strokeWidth={1.5 * (imgW / 400)} strokeDasharray="3,3" />;
                         }
-                        return <polygon points={pts.join(' ')} fill="none" stroke={color} strokeWidth={1.5 * (imgW / 400)} strokeDasharray="3,3" />;
+                        const [cx, cy] = dxfModelToImagePixels(activeDrawing.cx, activeDrawing.cy);
+                        return (
+                          <circle
+                            cx={cx}
+                            cy={cy}
+                            r={activeDrawing.r * scale}
+                            fill="none"
+                            stroke={color}
+                            strokeWidth={1.5 * (imgW / 400)}
+                            strokeDasharray="3,3"
+                          />
+                        );
+                      } else if (activeDrawing.type === 'polyline' && activeDrawing.points) {
+                        const d = activeDrawing.points.map((p: [number, number], i: number) => {
+                          const [mx, my] = dxfModelToImagePixels(p[0], p[1]);
+                          return `${i === 0 ? 'M' : 'L'}${mx.toFixed(2)} ${my.toFixed(2)}`;
+                        }).join(' ') + (activeDrawing.closed ? ' Z' : '');
+                        return <path d={d} fill="none" stroke={color} strokeWidth={1.5 * (imgW / 400)} strokeDasharray="3,3" />;
                       }
-                      const [cx, cy] = dxfModelToImagePixels(activeDrawing.cx, activeDrawing.cy);
+                      return null;
+                    })()}
+                    {hoveredCoord && (() => {
+                      let hx: number, hy: number;
+                      if (activeHoverSource === 'image' && rawHoverPos) {
+                        hx = rawHoverPos.x;
+                        hy = rawHoverPos.y;
+                      } else {
+                        const [mx, my] = dxfModelToImagePixels(hoveredCoord.x, hoveredCoord.y);
+                        hx = mx;
+                        hy = my;
+                      }
+                      const cursorColor = activeHoverSource === 'image' ? '#00e676' : '#ff9800';
                       return (
-                        <circle
-                          cx={cx}
-                          cy={cy}
-                          r={activeDrawing.r * scale}
-                          fill="none"
-                          stroke={color}
-                          strokeWidth={1.5 * (imgW / 400)}
-                          strokeDasharray="3,3"
-                        />
+                        <g transform={`translate(${hx}, ${hy})`} style={{ pointerEvents: 'none' }}>
+                          <circle r={6 * (imgW / 400)} fill="none" stroke={cursorColor} strokeWidth={1.5 * (imgW / 400)} />
+                          <line x1={-12 * (imgW / 400)} y1={0} x2={12 * (imgW / 400)} y2={0} stroke={cursorColor} strokeWidth={1.2 * (imgW / 400)} />
+                          <line x1={0} y1={-12 * (imgW / 400)} x2={0} y2={12 * (imgW / 400)} stroke={cursorColor} strokeWidth={1.2 * (imgW / 400)} />
+                        </g>
                       );
-                    } else if (activeDrawing.type === 'polyline' && activeDrawing.points) {
-                      const d = activeDrawing.points.map((p: [number, number], i: number) => {
-                        const [mx, my] = dxfModelToImagePixels(p[0], p[1]);
-                        return `${i === 0 ? 'M' : 'L'}${mx.toFixed(2)} ${my.toFixed(2)}`;
-                      }).join(' ') + (activeDrawing.closed ? ' Z' : '');
-                      return <path d={d} fill="none" stroke={color} strokeWidth={1.5 * (imgW / 400)} strokeDasharray="3,3" />;
-                    }
-                    return null;
-                  })()}
-                  {hoveredCoord && (() => {
-                    let hx: number, hy: number;
-                    if (activeHoverSource === 'image' && rawHoverPos) {
-                      hx = rawHoverPos.x;
-                      hy = rawHoverPos.y;
-                    } else {
-                      const [mx, my] = dxfModelToImagePixels(hoveredCoord.x, hoveredCoord.y);
-                      hx = mx;
-                      hy = my;
-                    }
-                    const cursorColor = activeHoverSource === 'image' ? '#00e676' : '#ff9800';
-                    return (
-                      <g transform={`translate(${hx}, ${hy})`} style={{ pointerEvents: 'none' }}>
-                        <circle r={6 * (imgW / 400)} fill="none" stroke={cursorColor} strokeWidth={1.5 * (imgW / 400)} />
-                        <line x1={-12 * (imgW / 400)} y1={0} x2={12 * (imgW / 400)} y2={0} stroke={cursorColor} strokeWidth={1.2 * (imgW / 400)} />
-                        <line x1={0} y1={-12 * (imgW / 400)} x2={0} y2={12 * (imgW / 400)} stroke={cursorColor} strokeWidth={1.2 * (imgW / 400)} />
-                      </g>
-                    );
-                  })()}
+                    })()}
+                  </g>
                 </g>
               </svg>
             </div>

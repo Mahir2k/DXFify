@@ -112,7 +112,7 @@ export function dxfModelToImagePixels(
   let mx = x_mm;
   let my = y_mm;
 
-  if (selectedTab === 'original' && homographyH) {
+  if (rotationTransforms && rotationTransforms.length > 0) {
     for (let i = rotationTransforms.length - 1; i >= 0; i--) {
       const t = rotationTransforms[i];
       const rad = -t.angle * (Math.PI / 180);
@@ -160,7 +160,7 @@ export function imagePixelsToDxfModel(
   let mx = px / scale;
   let my = paperH - py / scale;
 
-  if (selectedTab === 'original' && homographyH_inv && rotationTransforms) {
+  if (rotationTransforms && rotationTransforms.length > 0) {
     for (const t of rotationTransforms) {
       const rad = t.angle * (Math.PI / 180);
       const dx = mx - t.cx;
