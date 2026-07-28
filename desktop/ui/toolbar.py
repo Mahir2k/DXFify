@@ -2,7 +2,8 @@
 
 from typing import Dict, Optional
 from PyQt6.QtCore import QSize, pyqtSignal
-from PyQt6.QtWidgets import QAction, QActionGroup, QToolBar, QWidget
+from PyQt6.QtGui import QAction, QActionGroup
+from PyQt6.QtWidgets import QToolBar, QWidget
 
 
 TOOL_META: Dict[str, Dict[str, str]] = {
