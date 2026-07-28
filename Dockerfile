@@ -1,5 +1,5 @@
 # Use a unified Python & Node base image
-FROM python:3.14-slim AS base
+FROM python:3.12-slim AS base
 
 # Install Node.js and system dependencies
 RUN apt-get update && apt-get install -y \

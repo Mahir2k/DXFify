@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import type { ConversionResult, ToolId, Viewport, GeometryEntity } from '../types';
+import type { ConversionResult, ToolId, Viewport, GeometryEntity, ActiveDrawingState } from '../types';
 import { Ruler } from './Ruler';
+import { CadStatusBar } from './dxf/CadStatusBar';
+import { computeCircumcircle, evaluateSplinePoints, distToSegment, computeBoundingBox } from '../utils/geometryUtils';
 import * as THREE from 'three';
 
 
@@ -23,10 +25,11 @@ interface DxfPreviewProps {
   brushShape?: 'circle' | 'square';
   brushRadius?: number;
   onBrushRadiusChange?: (radius: number) => void;
+  onBrushShapeChange?: (shape: 'circle' | 'square') => void;
   onRotateWorkspace?: (newEntities: GeometryEntity[], angleDeg: number, cx: number, cy: number) => void;
   hoveredCoord?: { x: number; y: number } | null;
   onHoverCoord?: (coord: { x: number; y: number } | null) => void;
-  onActiveDrawingChange?: (drawing: any) => void;
+  onActiveDrawingChange?: (drawing: ActiveDrawingState) => void;
   onSubRegionSelect?: (bbox: [number, number, number, number]) => void;
   activeHoverSource?: 'dxf' | 'image' | null;
   onHoverSourceChange?: (source: 'dxf' | 'image' | null) => void;
@@ -51,6 +54,7 @@ export function DxfPreview({
   brushShape = 'circle',
   brushRadius = 15,
   onBrushRadiusChange,
+  onBrushShapeChange,
   onRotateWorkspace,
   hoveredCoord = null,
   onHoverCoord,
@@ -63,28 +67,16 @@ export function DxfPreview({
   const [holeLayerEnabled, setHoleLayerEnabled] = useState(true);
   const [detailsLayerEnabled, setDetailsLayerEnabled] = useState(true);
 
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  entities.forEach(entity => {
-    if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
-      minX = Math.min(minX, entity.cx - entity.r);
-      minY = Math.min(minY, entity.cy - entity.r);
-      maxX = Math.max(maxX, entity.cx + entity.r);
-      maxY = Math.max(maxY, entity.cy + entity.r);
-    } else if (entity.type === 'polyline' && entity.points) {
-      entity.points.forEach(pt => {
-        minX = Math.min(minX, pt[0]);
-        minY = Math.min(minY, pt[1]);
-        maxX = Math.max(maxX, pt[0]);
-        maxY = Math.max(maxY, pt[1]);
-      });
-    }
-  });
-
-  const hasBounds = minX !== Infinity;
-  const bboxWidth = hasBounds ? (maxX - minX) : 0;
-  const bboxHeight = hasBounds ? (maxY - minY) : 0;
-  const bboxMinX = hasBounds ? minX : 0;
-  const bboxMaxY = hasBounds ? maxY : 0;
+  const bbox = computeBoundingBox(entities);
+  const hasBounds = bbox.width > 0 || bbox.height > 0;
+  const bboxWidth = bbox.width;
+  const bboxHeight = bbox.height;
+  const bboxMinX = bbox.minX;
+  const bboxMaxY = bbox.maxY;
+  const minX = bbox.minX;
+  const maxX = bbox.maxX;
+  const minY = bbox.minY;
+  const maxY = bbox.maxY;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -238,11 +230,17 @@ export function DxfPreview({
         const newEntities = entities.filter((_, idx) => !selectedEntityIndices.includes(idx));
         onEntitiesChange(newEntities, true);
         setSelectedEntityIndices([]);
+      } else if (selectedTool === 'brush' && (e.key === 'b' || e.key === 'B' || e.key === 's' || e.key === 'S')) {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) {
+          return;
+        }
+        onBrushShapeChange?.(brushShape === 'circle' ? 'square' : 'circle');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [entities, selectedEntityIndices, onEntitiesChange]);
+  }, [entities, selectedEntityIndices, onEntitiesChange, selectedTool, brushShape, onBrushShapeChange]);
 
   useEffect(() => {
     return () => {
@@ -797,9 +795,10 @@ export function DxfPreview({
   };
 
   const handleAddPointClick = (pt: { x: number; y: number }) => {
+    const distanceScale = viewWidth / 300;
     let bestEntityIdx = -1;
     let bestSegmentIdx = -1;
-    let minD = 6.0; 
+    let minD = 6.0 * distanceScale; 
     let splitPoint: [number, number] = [0, 0];
 
     for (let idx = 0; idx < entities.length; idx++) {
@@ -845,6 +844,8 @@ export function DxfPreview({
     }
   };
 
+  const [hoveredNode, setHoveredNode] = useState<{ entityIdx: number; type: 'vertex' | 'center' | 'radius'; ptIdx?: number } | null>(null);
+
   const updateCursorFromEvent = (e: React.PointerEvent<SVGSVGElement>) => {
     const rawCoords = getModelCoords(e.clientX, e.clientY);
     if (!rawCoords) return;
@@ -859,50 +860,103 @@ export function DxfPreview({
     }
 
     setCursorMm(coords);
+
+    const distanceScale = viewWidth / 300;
+    const grabRadius = 5.5 * distanceScale * 2.2;
+    let foundNode: { entityIdx: number; type: 'vertex' | 'center' | 'radius'; ptIdx?: number } | null = null;
+
+    if (selectedTool === 'select' || selectedTool === 'delete-point' || selectedTool === 'add-point') {
+      for (let entityIdx = 0; entityIdx < entities.length; entityIdx++) {
+        const entity = entities[entityIdx];
+        const layer = entity.layer;
+        if (layer === 'HOLES' && !holeLayerEnabled) continue;
+        if (layer === 'OUTER' && !outerLayerEnabled) continue;
+        if (layer === 'DETAILS' && !detailsLayerEnabled) continue;
+
+        if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
+          if (selectedTool !== 'delete-point') {
+            const dCenter = Math.hypot(coords.x - entity.cx, coords.y - entity.cy);
+            if (dCenter < grabRadius) {
+              foundNode = { entityIdx, type: 'center' };
+              break;
+            }
+            const dRadius = Math.hypot(coords.x - (entity.cx + entity.r), coords.y - entity.cy);
+            if (dRadius < grabRadius) {
+              foundNode = { entityIdx, type: 'radius' };
+              break;
+            }
+          }
+        } else if (entity.type === 'polyline' && entity.points) {
+          for (let ptIdx = 0; ptIdx < entity.points.length; ptIdx++) {
+            const pt = entity.points[ptIdx];
+            const dPt = Math.hypot(coords.x - pt[0], coords.y - pt[1]);
+            if (dPt < grabRadius) {
+              foundNode = { entityIdx, type: 'vertex', ptIdx };
+              break;
+            }
+          }
+          if (foundNode) break;
+        }
+      }
+    }
+    setHoveredNode(foundNode);
   };
 
   
-  const handleVertexPointerDown = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number, pointIdx: number) => {
-    e.stopPropagation();
-    if (selectedTool === 'delete-point') {
-      const ent = entities[entityIdx];
-      if (ent.type === 'polyline' && ent.points) {
-        if (ent.points.length > 2) {
-          const newPoints = ent.points.filter((_, i) => i !== pointIdx);
-          const newEntities = [...entities];
-          newEntities[entityIdx] = {
-            ...ent,
-            points: newPoints,
-          };
-          onEntitiesChange(newEntities, true);
+  const handleStartNodeDragOrDelete = (
+    node: { entityIdx: number; type: 'vertex' | 'center' | 'radius'; ptIdx?: number },
+    pointerId: number
+  ) => {
+    if (selectedTool === 'delete-point' || selectedTool === 'delete') {
+      if (node.type === 'vertex' && node.ptIdx !== undefined) {
+        const ent = entities[node.entityIdx];
+        if (ent && ent.type === 'polyline' && ent.points) {
+          if (ent.points.length > 2) {
+            const newPoints = ent.points.filter((_, i) => i !== node.ptIdx);
+            const newEntities = [...entities];
+            newEntities[node.entityIdx] = { ...ent, points: newPoints };
+            onEntitiesChange(newEntities, true);
+          } else {
+            const newEntities = entities.filter((_, i) => i !== node.entityIdx);
+            onEntitiesChange(newEntities, true);
+          }
+          setHoveredNode(null);
+          return true;
         }
       }
-    } else {
-      handleVertexDragStart(e, entityIdx, pointIdx);
     }
+
+    setActiveDrag({ type: node.type, entityIdx: node.entityIdx, pointIdx: node.ptIdx });
+    if (svgRef.current) {
+      try {
+        svgRef.current.setPointerCapture(pointerId);
+      } catch {}
+    }
+    return true;
   };
 
-  const handleVertexDragStart = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number, pointIdx: number) => {
+  const handleVertexPointerDown = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number, pointIdx: number) => {
     e.stopPropagation();
-    setActiveDrag({ type: 'vertex', entityIdx, pointIdx });
-    e.currentTarget.setPointerCapture(e.pointerId);
+    handleStartNodeDragOrDelete({ type: 'vertex', entityIdx, ptIdx: pointIdx }, e.pointerId);
   };
 
   const handleCircleCenterDragStart = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number) => {
     e.stopPropagation();
-    setActiveDrag({ type: 'center', entityIdx });
-    e.currentTarget.setPointerCapture(e.pointerId);
+    handleStartNodeDragOrDelete({ type: 'center', entityIdx }, e.pointerId);
   };
 
   const handleCircleRadiusDragStart = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number) => {
     e.stopPropagation();
-    setActiveDrag({ type: 'radius', entityIdx });
-    e.currentTarget.setPointerCapture(e.pointerId);
+    handleStartNodeDragOrDelete({ type: 'radius', entityIdx }, e.pointerId);
   };
 
   const handleHandlePointerUp = (e: React.PointerEvent<SVGCircleElement>) => {
     if (activeDrag) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
+      if (svgRef.current) {
+        try {
+          svgRef.current.releasePointerCapture(e.pointerId);
+        } catch {}
+      }
       setActiveDrag(null);
       onEntitiesChange(entities, true);
     }
@@ -916,6 +970,11 @@ export function DxfPreview({
     const snapped = getSnappedCoords(e.clientX, e.clientY);
     if (snapped && selectedTool !== 'brush') {
       clickCoords = snapped;
+    }
+
+    if (hoveredNode) {
+      handleStartNodeDragOrDelete(hoveredNode, e.pointerId);
+      return;
     }
 
     if (selectedTool === 'select' || selectedTool === 'subregion-select') {
@@ -1119,8 +1178,9 @@ export function DxfPreview({
         onActiveDrawingChange?.(null);
       }
     } else if (selectedTool === 'centerline') {
+      const distanceScale = viewWidth / 300;
       const closest = findClosestEntity(clickCoords);
-      if (closest.index !== -1 && closest.dist < 15.0) {
+      if (closest.index !== -1 && closest.dist < 15.0 * distanceScale) {
         const target = entities[closest.index];
         if (target.type === 'circle' && target.cx != null && target.cy != null && target.r != null) {
           const rExt = target.r * 1.25;
@@ -1187,9 +1247,10 @@ export function DxfPreview({
         }
       }
     } else if (selectedTool === 'cut') {
+      const distanceScale = viewWidth / 300;
       let bestEntIdx = -1;
       let bestSegIdx = -1;
-      let minD = 10.0;
+      let minD = 10.0 * distanceScale;
       let cutPt: [number, number] = [clickCoords.x, clickCoords.y];
 
       entities.forEach((ent, idx) => {
@@ -1220,12 +1281,13 @@ export function DxfPreview({
         }
       }
     } else if (selectedTool === 'fuse') {
+      const distanceScale = viewWidth / 300;
       let closestPts: Array<{ entIdx: number; ptIdx: number; pt: [number, number]; dist: number }> = [];
       entities.forEach((ent, entIdx) => {
         if (ent.type === 'polyline' && ent.points) {
           ent.points.forEach((pt, ptIdx) => {
             const d = Math.hypot(clickCoords.x - pt[0], clickCoords.y - pt[1]);
-            if (d < 15.0) {
+            if (d < 15.0 * distanceScale) {
               closestPts.push({ entIdx, ptIdx, pt, dist: d });
             }
           });
@@ -1289,13 +1351,15 @@ export function DxfPreview({
         onActiveDrawingChange?.(null);
       }
     } else if (selectedTool === 'delete') {
+      const distanceScale = viewWidth / 300;
       const closest = findClosestEntity(clickCoords);
-      if (closest.index !== -1 && closest.dist < 6.0) {
+      if (closest.index !== -1 && closest.dist < 6.0 * distanceScale) {
         onEntitiesChange(entities.filter((_, i) => i !== closest.index));
       }
     } else if (selectedTool === 'mark-hole') {
+      const distanceScale = viewWidth / 300;
       const closest = findClosestEntity(clickCoords);
-      if (closest.index !== -1 && closest.dist < 6.0) {
+      if (closest.index !== -1 && closest.dist < 6.0 * distanceScale) {
         const newEntities = [...entities];
         newEntities[closest.index] = {
           ...newEntities[closest.index],
@@ -1306,17 +1370,18 @@ export function DxfPreview({
     } else if (selectedTool === 'add-point') {
       handleAddPointClick(clickCoords);
     } else if (selectedTool === 'chamfer' || selectedTool === 'fillet') {
+      const distanceScale = viewWidth / 300;
       let bestEntIdx = -1;
       let bestPtIdx = -1;
-      let minD = 10.0;
+      let minD = 10.0 * distanceScale;
 
-      entities.forEach((ent, entIdx) => {
+      entities.forEach((ent, idx) => {
         if (ent.type === 'polyline' && ent.points && ent.points.length >= 3) {
           ent.points.forEach((pt, ptIdx) => {
             const d = Math.hypot(clickCoords.x - pt[0], clickCoords.y - pt[1]);
             if (d < minD) {
               minD = d;
-              bestEntIdx = entIdx;
+              bestEntIdx = idx;
               bestPtIdx = ptIdx;
             }
           });
@@ -1328,43 +1393,26 @@ export function DxfPreview({
         if (ent.points) {
           const pts = ent.points;
           const n = pts.length;
-          const iPrev = (bestPtIdx - 1 + n) % n;
-          const iNext = (bestPtIdx + 1) % n;
+          const prevPt = pts[(bestPtIdx - 1 + n) % n];
+          const currPt = pts[bestPtIdx];
+          const nextPt = pts[(bestPtIdx + 1) % n];
 
-          if (!ent.closed && (bestPtIdx === 0 || bestPtIdx === n - 1)) {
-            return;
-          }
+          const d1 = Math.hypot(currPt[0] - prevPt[0], currPt[1] - prevPt[1]);
+          const d2 = Math.hypot(nextPt[0] - currPt[0], nextPt[1] - currPt[1]);
+          const radius = Math.min(d1, d2) * 0.25;
 
-          const Vi = pts[bestPtIdx];
-          const Vprev = pts[iPrev];
-          const Vnext = pts[iNext];
+          if (radius > 0.1) {
+            const u1: [number, number] = [(prevPt[0] - currPt[0]) / d1, (prevPt[1] - currPt[1]) / d1];
+            const u2: [number, number] = [(nextPt[0] - currPt[0]) / d2, (nextPt[1] - currPt[1]) / d2];
 
-          const lenPrev = Math.hypot(Vprev[0] - Vi[0], Vprev[1] - Vi[1]);
-          const lenNext = Math.hypot(Vnext[0] - Vi[0], Vnext[1] - Vi[1]);
-
-          const trim = Math.min(3.0, lenPrev * 0.4, lenNext * 0.4);
-          if (trim > 0.01) {
-            const p1: [number, number] = [
-              Vi[0] + (trim / lenPrev) * (Vprev[0] - Vi[0]),
-              Vi[1] + (trim / lenPrev) * (Vprev[1] - Vi[1]),
-            ];
-            const p2: [number, number] = [
-              Vi[0] + (trim / lenNext) * (Vnext[0] - Vi[0]),
-              Vi[1] + (trim / lenNext) * (Vnext[1] - Vi[1]),
-            ];
+            const pStart: [number, number] = [currPt[0] + u1[0] * radius, currPt[1] + u1[1] * radius];
+            const pEnd: [number, number] = [currPt[0] + u2[0] * radius, currPt[1] + u2[1] * radius];
 
             let replacement: [number, number][] = [];
             if (selectedTool === 'chamfer') {
-              replacement = [p1, p2];
+              replacement = [pStart, pEnd];
             } else {
-              const arcPts: [number, number][] = [];
-              for (let k = 0; k <= 8; k++) {
-                const t = k / 8;
-                const x = (1 - t) ** 2 * p1[0] + 2 * (1 - t) * t * Vi[0] + t ** 2 * p2[0];
-                const y = (1 - t) ** 2 * p1[1] + 2 * (1 - t) * t * Vi[1] + t ** 2 * p2[1];
-                arcPts.push([x, y]);
-              }
-              replacement = arcPts;
+              replacement = [pStart, [currPt[0], currPt[1]], pEnd];
             }
 
             const newPts = [...pts.slice(0, bestPtIdx), ...replacement, ...pts.slice(bestPtIdx + 1)];
@@ -1375,6 +1423,7 @@ export function DxfPreview({
         }
       }
     } else if (selectedTool === 'align') {
+      const distanceScale = viewWidth / 300;
       if (!alignSelectedSegment) {
         let minDistance = Infinity;
         let closestSegment: {
@@ -1406,7 +1455,7 @@ export function DxfPreview({
           }
         });
 
-        if (closestSegment && minDistance < 15.0) {
+        if (closestSegment && minDistance < 15.0 * distanceScale) {
           setAlignSelectedSegment(closestSegment);
         }
       } else {
@@ -1687,6 +1736,15 @@ export function DxfPreview({
   };
 
   const handlePointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (activeDrag) {
+      if (svgRef.current) {
+        try {
+          svgRef.current.releasePointerCapture(e.pointerId);
+        } catch {}
+      }
+      setActiveDrag(null);
+      onEntitiesChange(entities, true);
+    }
     if (transformMode) {
       setTransformMode(null);
       setTransformStart(null);
@@ -1950,78 +2008,122 @@ export function DxfPreview({
 
                           if (entity.type === 'circle' && entity.cx != null && entity.cy != null && entity.r != null) {
                             if (selectedTool === 'delete-point') return null;
+                            const isCenterHovered = hoveredNode?.entityIdx === entityIdx && hoveredNode?.type === 'center';
+                            const isRadiusHovered = hoveredNode?.entityIdx === entityIdx && hoveredNode?.type === 'radius';
+
                             return (
                               <g key={entityIdx}>
-                                {/* Center hit target */}
+                                {/* Center hover pulse ring */}
+                                {isCenterHovered && (
+                                  <circle
+                                    cx={entity.cx}
+                                    cy={entity.cy}
+                                    r={visualRadius * 2.5}
+                                    fill="none"
+                                    stroke="#ffcc00"
+                                    strokeWidth={nodeStrokeWidth * 1.5}
+                                    style={{ pointerEvents: 'none' }}
+                                  />
+                                )}
+                                {/* Center visual dot */}
                                 <circle
                                   cx={entity.cx}
                                   cy={entity.cy}
-                                  r={grabRadius}
+                                  r={isCenterHovered ? visualRadius * 1.6 : visualRadius}
+                                  fill={isCenterHovered ? '#ffcc00' : 'var(--accent)'}
+                                  stroke="#ffffff"
+                                  strokeWidth={isCenterHovered ? nodeStrokeWidth * 1.8 : nodeStrokeWidth}
+                                  style={{ pointerEvents: 'none', transition: 'r 0.15s ease, fill 0.15s ease' }}
+                                />
+                                {/* Center hit target rendered LAST so it captures clicks */}
+                                <circle
+                                  cx={entity.cx}
+                                  cy={entity.cy}
+                                  r={grabRadius * 1.3}
                                   fill="transparent"
                                   style={{ cursor: 'move', pointerEvents: 'all' }}
                                   onPointerDown={(e) => handleCircleCenterDragStart(e, entityIdx)}
                                   onPointerUp={handleHandlePointerUp}
                                 />
-                                {/* Center visual dot */}
-                                <circle
-                                  cx={entity.cx}
-                                  cy={entity.cy}
-                                  r={visualRadius}
-                                  fill="var(--accent)"
-                                  stroke="#ffffff"
-                                  strokeWidth={nodeStrokeWidth}
-                                  style={{ pointerEvents: 'none' }}
-                                />
 
-                                {/* Radius hit target */}
-                                <circle
-                                  cx={entity.cx + entity.r}
-                                  cy={entity.cy}
-                                  r={grabRadius}
-                                  fill="transparent"
-                                  style={{ cursor: 'ew-resize', pointerEvents: 'all' }}
-                                  onPointerDown={(e) => handleCircleRadiusDragStart(e, entityIdx)}
-                                  onPointerUp={handleHandlePointerUp}
-                                />
+                                {/* Radius hover pulse ring */}
+                                {isRadiusHovered && (
+                                  <circle
+                                    cx={entity.cx + entity.r}
+                                    cy={entity.cy}
+                                    r={visualRadius * 2.5}
+                                    fill="none"
+                                    stroke="#ffcc00"
+                                    strokeWidth={nodeStrokeWidth * 1.5}
+                                    style={{ pointerEvents: 'none' }}
+                                  />
+                                )}
                                 {/* Radius visual dot */}
                                 <circle
                                   cx={entity.cx + entity.r}
                                   cy={entity.cy}
-                                  r={visualRadius}
-                                  fill="#ffcc00"
+                                  r={isRadiusHovered ? visualRadius * 1.6 : visualRadius}
+                                  fill={isRadiusHovered ? '#ffcc00' : '#ffcc00'}
                                   stroke="#ffffff"
-                                  strokeWidth={nodeStrokeWidth}
-                                  style={{ pointerEvents: 'none' }}
+                                  strokeWidth={isRadiusHovered ? nodeStrokeWidth * 1.8 : nodeStrokeWidth}
+                                  style={{ pointerEvents: 'none', transition: 'r 0.15s ease, fill 0.15s ease' }}
+                                />
+                                {/* Radius hit target rendered LAST so it captures clicks */}
+                                <circle
+                                  cx={entity.cx + entity.r}
+                                  cy={entity.cy}
+                                  r={grabRadius * 1.3}
+                                  fill="transparent"
+                                  style={{ cursor: 'ew-resize', pointerEvents: 'all' }}
+                                  onPointerDown={(e) => handleCircleRadiusDragStart(e, entityIdx)}
+                                  onPointerUp={handleHandlePointerUp}
                                 />
                               </g>
                             );
                           } else if (entity.type === 'polyline' && entity.points) {
                             return (
                               <g key={entityIdx}>
-                                {entity.points.map((pt, ptIdx) => (
-                                  <g key={ptIdx}>
-                                    {/* Expanded hit target maintaining exact 2.2x ratio to visual node */}
-                                    <circle
-                                      cx={pt[0]}
-                                      cy={pt[1]}
-                                      r={grabRadius}
-                                      fill="transparent"
-                                      style={{ cursor: selectedTool === 'delete-point' ? 'pointer' : 'move', pointerEvents: 'all' }}
-                                      onPointerDown={(e) => handleVertexPointerDown(e, entityIdx, ptIdx)}
-                                      onPointerUp={handleHandlePointerUp}
-                                    />
-                                    {/* Distance-proportional visual vertex handle */}
-                                    <circle
-                                      cx={pt[0]}
-                                      cy={pt[1]}
-                                      r={visualRadius}
-                                      fill={selectedTool === 'delete-point' ? '#ff3b30' : 'var(--accent)'}
-                                      stroke="#ffffff"
-                                      strokeWidth={nodeStrokeWidth}
-                                      style={{ pointerEvents: 'none' }}
-                                    />
-                                  </g>
-                                ))}
+                                {entity.points.map((pt, ptIdx) => {
+                                  const isVertexHovered = hoveredNode?.entityIdx === entityIdx && hoveredNode?.type === 'vertex' && hoveredNode?.ptIdx === ptIdx;
+
+                                  return (
+                                    <g key={ptIdx}>
+                                      {/* Visual vertex handle dot */}
+                                      <circle
+                                        cx={pt[0]}
+                                        cy={pt[1]}
+                                        r={isVertexHovered ? visualRadius * 1.6 : visualRadius}
+                                        fill={selectedTool === 'delete-point' ? '#ff3b30' : isVertexHovered ? '#ffcc00' : 'var(--accent)'}
+                                        stroke="#ffffff"
+                                        strokeWidth={isVertexHovered ? nodeStrokeWidth * 1.8 : nodeStrokeWidth}
+                                        style={{ pointerEvents: 'none', transition: 'r 0.15s ease, fill 0.15s ease' }}
+                                      />
+                                      {/* Hover pulse outer ring */}
+                                      {isVertexHovered && (
+                                        <circle
+                                          cx={pt[0]}
+                                          cy={pt[1]}
+                                          r={visualRadius * 2.5}
+                                          fill="none"
+                                          stroke="#ffcc00"
+                                          strokeWidth={nodeStrokeWidth * 1.5}
+                                          strokeDasharray={`${nodeStrokeWidth * 2},${nodeStrokeWidth * 2}`}
+                                          style={{ pointerEvents: 'none' }}
+                                        />
+                                      )}
+                                      {/* Transparent Hit target rendered LAST on top of visual dots */}
+                                      <circle
+                                        cx={pt[0]}
+                                        cy={pt[1]}
+                                        r={grabRadius * 1.3}
+                                        fill="transparent"
+                                        style={{ cursor: selectedTool === 'delete-point' ? 'pointer' : 'move', pointerEvents: 'all' }}
+                                        onPointerDown={(e) => handleVertexPointerDown(e, entityIdx, ptIdx)}
+                                        onPointerUp={handleHandlePointerUp}
+                                      />
+                                    </g>
+                                  );
+                                })}
                               </g>
                             );
                           }
@@ -2662,30 +2764,16 @@ export function DxfPreview({
           </div>
         </div>
 
-        <div className="canvas-status-bar">
-          <span>
-            X <strong className="tabular-nums">{cursorMm ? cursorMm.x.toFixed(2) : '—'}</strong>
-          </span>
-          <span>
-            Y <strong className="tabular-nums">{cursorMm ? cursorMm.y.toFixed(2) : '—'}</strong>
-          </span>
-          {selectedTool === 'measure' && measureStart && measureEnd && (
-            <span style={{ marginLeft: '16px', color: 'var(--accent)' }}>
-              Distance: <strong className="tabular-nums">{distance.toFixed(2)} mm</strong>
-            </span>
-          )}
-          {selectedTool === 'brush' && (
-            <span style={{ marginLeft: '16px', color: 'var(--accent)' }}>
-              Brush: <strong className="tabular-nums">{brushRadius.toFixed(1)} mm</strong> ({brushShape === 'circle' ? 'Ball' : 'Cube'})
-            </span>
-          )}
-          <span style={{ marginLeft: 'auto' }}>
-            Zoom <strong className="tabular-nums">{currentZoomPercentage}%</strong>
-          </span>
-          <span>
-            Tool <strong>{selectedTool}</strong>
-          </span>
-        </div>
+        <CadStatusBar
+          cursorMm={cursorMm}
+          selectedTool={selectedTool}
+          measureStart={measureStart}
+          measureEnd={measureEnd}
+          brushRadius={brushRadius}
+          brushShape={brushShape}
+          onBrushShapeChange={onBrushShapeChange}
+          currentZoomPercentage={currentZoomPercentage}
+        />
       </div>
     </section>
   );

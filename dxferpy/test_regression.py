@@ -1,27 +1,30 @@
+"""End-to-end regression testing suite for the DXFify computer vision and vectorization pipeline."""
+
 import os
 import unittest
 import cv2
 import numpy as np
+from segment_object import create_birefnet_session
 from vectorize_smart import get_homography
 from pipeline_worker import segment_single_image, vectorize_single_image
 
+
 class TestDxferPipelineRegression(unittest.TestCase):
+    """Integration test case verifying segmentation, homography alignment, and DXF vectorization."""
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
+        """Sets up test workspace directories and preloads the neural BiRefNet ONNX session."""
         cls.repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         cls.samples_dir = os.path.join(cls.repo_root, "dxferpy", "samples")
         cls.output_dir = os.path.join(cls.repo_root, "dxferpy", "temp", "test_regression_out")
         os.makedirs(cls.output_dir, exist_ok=True)
-        
-        # Load rembg session
-        from rembg.sessions.birefnet_general_lite import BiRefNetSessionGeneralLite
-        import onnxruntime as ort
-        sess_opts = ort.SessionOptions()
-        sess_opts.enable_cpu_mem_arena = False
-        sess_opts.enable_mem_pattern = False
-        cls.session = BiRefNetSessionGeneralLite("birefnet-general-lite", sess_opts)
 
-    def test_key_segmentation_and_vectorization(self):
+        # Load rembg session via centralized helper
+        cls.session = create_birefnet_session()
+
+    def test_key_segmentation_and_vectorization(self) -> None:
+        """Tests end-to-end pipeline execution on key.jpg sample image."""
         img_path = os.path.join(self.samples_dir, "key.jpg")
         if not os.path.exists(img_path):
             self.skipTest(f"Sample image not found: {img_path}")
@@ -34,7 +37,7 @@ class TestDxferPipelineRegression(unittest.TestCase):
             erosion_kernel=3,
             erosion_iterations=1,
         )
-        
+
         self.assertIsNotNone(img)
         self.assertIsNotNone(mask)
         self.assertEqual(mask.shape[:2], img.shape[:2])
@@ -70,6 +73,7 @@ class TestDxferPipelineRegression(unittest.TestCase):
         self.assertTrue(os.path.exists(dxf_path))
         self.assertGreater(os.path.getsize(dxf_path), 0)
         self.assertGreater(report.get("totalEntities", 0), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

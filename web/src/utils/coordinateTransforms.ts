@@ -1,9 +1,18 @@
+/**
+ * Represents a discrete 2D rotation step applied to CAD workspace geometry.
+ */
 export interface RotationStep {
-  angle: number; // angle in degrees
-  cx: number;    // pivot X in mm
-  cy: number;    // pivot Y in mm
+  /** Angle in degrees (positive for counter-clockwise) */
+  angle: number;
+  /** Center X pivot in millimeters */
+  cx: number;
+  /** Center Y pivot in millimeters */
+  cy: number;
 }
 
+/**
+ * 2D rigid transformation matrix parameters (rotation + translation).
+ */
 export interface RigidMatrix {
   cos: number;
   sin: number;
@@ -11,6 +20,26 @@ export interface RigidMatrix {
   ty: number;
 }
 
+/**
+ * Options required for bidirectional coordinate space conversion.
+ */
+export interface TransformOptions {
+  scale: number;
+  paperH: number;
+  selectedTab: string;
+  homographyH?: number[] | null;
+  homographyH_inv?: number[] | null;
+  rotationTransforms?: RotationStep[] | null;
+}
+
+/**
+ * Solves an 8-DOF perspective homography matrix mapping 4 source points to 4 destination points
+ * using Gaussian elimination with partial pivoting.
+ *
+ * @param src Array of 4 2D source point tuples [x, y]
+ * @param dst Array of 4 2D destination point tuples [u, v]
+ * @returns 9-element column-major homography matrix array H, or null if singular
+ */
 export function solveHomography(src: [number, number][], dst: [number, number][]): number[] | null {
   const A: number[][] = [];
   const B: number[] = [];
@@ -51,6 +80,9 @@ export function solveHomography(src: [number, number][], dst: [number, number][]
   return H;
 }
 
+/**
+ * Applies 3x3 homography transformation to point (x, y).
+ */
 export function transformHomography(H: number[], x: number, y: number): [number, number] {
   const w = H[6] * x + H[7] * y + H[8];
   if (Math.abs(w) < 1e-6) return [x, y];
@@ -60,10 +92,11 @@ export function transformHomography(H: number[], x: number, y: number): [number,
 }
 
 /**
-  Accumulates a sequence of 2D rotation steps into a single composite 2D rigid matrix (cos, sin, tx, ty).
+ * Accumulates a sequence of 2D rotation steps into a single composite 2D rigid matrix (cos, sin, tx, ty).
  */
-export function composeRotationTransforms(transforms: RotationStep[]): RigidMatrix {
+export function composeRotationTransforms(transforms?: RotationStep[] | null): RigidMatrix {
   let m: RigidMatrix = { cos: 1, sin: 0, tx: 0, ty: 0 };
+  if (!transforms) return m;
   for (const t of transforms) {
     const rad = t.angle * (Math.PI / 180);
     const n_cos = Math.cos(rad);
@@ -82,7 +115,7 @@ export function composeRotationTransforms(transforms: RotationStep[]): RigidMatr
 }
 
 /**
-  Generates an SVG matrix(a, b, c, d, e, f) transform string for background <image> elements in SVG Y-down space.
+ * Generates an SVG matrix(a, b, c, d, e, f) transform string for background <image> elements in SVG Y-down space.
  */
 export function getSvgImageMatrix(matrix: RigidMatrix, scale: number, paperH: number): string {
   const a = matrix.cos;
@@ -95,20 +128,14 @@ export function getSvgImageMatrix(matrix: RigidMatrix, scale: number, paperH: nu
 }
 
 /**
-  Converts an (x, y) mm point from DXF model space into (px, py) image pixel space.
+ * Maps 2D DXF millimeter model coordinates (x_mm, y_mm) to image pixel coordinates.
  */
 export function dxfModelToImagePixels(
   x_mm: number,
   y_mm: number,
-  options: {
-    scale: number;
-    paperH: number;
-    selectedTab: string;
-    homographyH: number[] | null;
-    rotationTransforms: RotationStep[];
-  }
+  opts: TransformOptions,
 ): [number, number] {
-  const { scale, paperH, selectedTab, homographyH, rotationTransforms } = options;
+  const { scale, paperH, selectedTab, homographyH_inv, rotationTransforms } = opts;
   let mx = x_mm;
   let my = y_mm;
 
@@ -116,45 +143,52 @@ export function dxfModelToImagePixels(
     for (let i = rotationTransforms.length - 1; i >= 0; i--) {
       const t = rotationTransforms[i];
       const rad = -t.angle * (Math.PI / 180);
+      const c = Math.cos(rad);
+      const s = Math.sin(rad);
       const dx = mx - t.cx;
       const dy = my - t.cy;
-      mx = t.cx + dx * Math.cos(rad) - dy * Math.sin(rad);
-      my = t.cy + dx * Math.sin(rad) + dy * Math.cos(rad);
+      mx = t.cx + (dx * c - dy * s);
+      my = t.cy + (dx * s + dy * c);
     }
   }
 
-  let px = mx * scale;
-  let py = (paperH - my) * scale;
-
-  if (selectedTab === 'original' && homographyH) {
-    [px, py] = transformHomography(homographyH, px, py);
+  if (selectedTab === 'original' && homographyH_inv) {
+    const workX = mx * scale;
+    const workY = (paperH - my) * scale;
+    return transformHomography(homographyH_inv, workX, workY);
   }
 
-  return [px, py];
+  return [mx * scale, (paperH - my) * scale];
 }
 
 /**
-  Converts a (px, py) image pixel coordinate from ImagePreview into (x, y) mm in DXF model space.
+ * Maps image pixel coordinates (px, py) to 2D DXF millimeter model space coordinates.
  */
 export function imagePixelsToDxfModel(
-  px_in: number,
-  py_in: number,
-  options: {
-    scale: number;
-    paperH: number;
-    selectedTab: string;
-    homographyH_inv: number[] | null;
-    rotationTransforms?: RotationStep[];
-  }
+  px: number,
+  py: number,
+  opts: TransformOptions,
 ): { x: number; y: number } {
-  const { scale, paperH, selectedTab, homographyH_inv, rotationTransforms } = options;
-  let px = px_in;
-  let py = py_in;
+  const { scale, paperH, selectedTab, homographyH, rotationTransforms } = opts;
 
-  if (selectedTab === 'original' && homographyH_inv) {
-    const [unWarpX, unWarpY] = transformHomography(homographyH_inv, px, py);
-    px = unWarpX;
-    py = unWarpY;
+  if (selectedTab === 'original' && homographyH) {
+    const [wx, wy] = transformHomography(homographyH, px, py);
+    const mx_raw = wx / scale;
+    const my_raw = paperH - wy / scale;
+    let mx = mx_raw;
+    let my = my_raw;
+    if (rotationTransforms) {
+      for (const t of rotationTransforms) {
+        const rad = (t.angle * Math.PI) / 180;
+        const c = Math.cos(rad);
+        const s = Math.sin(rad);
+        const dx = mx - t.cx;
+        const dy = my - t.cy;
+        mx = t.cx + (dx * c - dy * s);
+        my = t.cy + (dx * s + dy * c);
+      }
+    }
+    return { x: mx, y: my };
   }
 
   let mx = px / scale;
@@ -162,11 +196,13 @@ export function imagePixelsToDxfModel(
 
   if (rotationTransforms && rotationTransforms.length > 0) {
     for (const t of rotationTransforms) {
-      const rad = t.angle * (Math.PI / 180);
+      const rad = (t.angle * Math.PI) / 180;
+      const c = Math.cos(rad);
+      const s = Math.sin(rad);
       const dx = mx - t.cx;
       const dy = my - t.cy;
-      mx = t.cx + dx * Math.cos(rad) - dy * Math.sin(rad);
-      my = t.cy + dx * Math.sin(rad) + dy * Math.cos(rad);
+      mx = t.cx + (dx * c - dy * s);
+      my = t.cy + (dx * s + dy * c);
     }
   }
 

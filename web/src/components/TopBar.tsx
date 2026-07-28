@@ -269,11 +269,21 @@ export function TopBar(props: TopBarProps) {
               className={`menu-item${openMenu === name ? ' open' : ''}`}
               onClick={() => click(name)}
               onMouseEnter={() => hover(name)}
-              role="menuitem"
+              tabIndex={0}
+              role="button"
+              aria-haspopup="true"
+              aria-expanded={openMenu === name}
+              aria-label={`${name} menu`}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  click(name);
+                }
+              }}
             >
               {name}
               {openMenu === name && (
-                <div className="menu-dropdown" role="menu">
+                <div className="menu-dropdown" role="menu" aria-label={`${name} submenu`}>
                   {menus[name].map((item, i) =>
                     item.type === 'separator' ? (
                       <div key={i} className="menu-sep" role="separator" />
@@ -300,11 +310,12 @@ export function TopBar(props: TopBarProps) {
         </div>
       </header>
 
-      {}
+      {/* Hidden file input */}
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        aria-label="Upload photo for conversion"
         style={{ display: 'none' }}
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -313,13 +324,13 @@ export function TopBar(props: TopBarProps) {
         }}
       />
 
-      {}
+      {/* Dialogs */}
       {dialog && (
-        <div className="dialog-overlay" onClick={() => setDialog(null)}>
+        <div className="dialog-overlay" onClick={() => setDialog(null)} role="dialog" aria-modal="true" aria-labelledby="dialog-title">
           <div className="dialog-box" onClick={(e) => e.stopPropagation()}>
             {dialog === 'about' ? (
               <>
-                <h3>DXFify</h3>
+                <h3 id="dialog-title">DXFify</h3>
                 <p>Image → DXF conversion tool with ArUco marker calibration.</p>
                 <p className="dialog-muted">
                   Upload a photo of a part placed on a calibrated ArUco sheet, and DXFify

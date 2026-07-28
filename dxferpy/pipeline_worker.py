@@ -1,8 +1,16 @@
+"""Persistent Flask HTTP worker server for the DXFify computer vision and vectorization pipeline.
+
+This module preloads the BiRefNet neural segmentation model at startup and handles
+end-to-end processing requests (/process) and selective sub-region reprocessing (/process_region).
+"""
+
 import json
+import logging
 import os
 import sys
 import time
 import traceback
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request
 
@@ -13,42 +21,58 @@ if DXFERPY_DIR not in sys.path:
 import cv2
 import ezdxf
 import numpy as np
-from rembg import new_session, remove
 from render_dxf import render_dxf_to_png
-from segment_object import get_aruco_corners, order_points_by_id
-from vectorize_smart import PAPER_SIZES, get_homography, smooth_curve, vectorize_contour, extract_details
+from segment_object import create_birefnet_session, get_aruco_corners, order_points_by_id
+from vectorize_smart import (
+    PAPER_SIZES,
+    extract_details,
+    get_homography,
+    smooth_curve,
+    vectorize_contour,
+)
+
+logging.basicConfig(level=logging.INFO, format="[%(asctime)s worker] %(message)s")
+logger = logging.getLogger("pipeline_worker")
 
 app = Flask(__name__)
 
-
-print("[worker] Loading rembg BiRefNet model...", flush=True)
+logger.info("Loading rembg BiRefNet model...")
 _t0 = time.time()
-import onnxruntime as ort
-from rembg.sessions.birefnet_general_lite import BiRefNetSessionGeneralLite
-sess_opts = ort.SessionOptions()
-sess_opts.enable_cpu_mem_arena = False
-sess_opts.enable_mem_pattern = False
-if "OMP_NUM_THREADS" in os.environ:
-    threads = int(os.environ["OMP_NUM_THREADS"])
-    sess_opts.inter_op_num_threads = threads
-    sess_opts.intra_op_num_threads = threads
-providers = ["CPUExecutionProvider"]
-if "CUDAExecutionProvider" in ort.get_available_providers():
-    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-elif "ROCMExecutionProvider" in ort.get_available_providers():
-    providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
-rembg_session = BiRefNetSessionGeneralLite("birefnet-general-lite", sess_opts, providers=providers)
-print(f"[worker] Model loaded in {time.time() - _t0:.1f}s", flush=True)
+rembg_session = create_birefnet_session()
+logger.info(f"Model loaded in {time.time() - _t0:.1f}s")
 
 
 def segment_single_image(
     img_path: str,
-    session,
+    session: Any,
     *,
-    mask_threshold=240,
-    erosion_kernel=3,
-    erosion_iterations=1,
-) -> tuple:
+    mask_threshold: int = 240,
+    erosion_kernel: int = 3,
+    erosion_iterations: int = 1,
+) -> Tuple[np.ndarray, np.ndarray, bool]:
+    """Segments the primary physical object from a raw photograph.
+
+    Uses BiRefNet neural segmentation combined with OpenCV Guided Filter edge boundary
+    refinement and morphological erosion to shave off edge artifacts.
+
+    Args:
+        img_path: Absolute path to the source image file (JPG/PNG).
+        session: Active ONNX Runtime session for BiRefNet inference.
+        mask_threshold: Binarization cutoff threshold (1-255). Defaults to 240.
+        erosion_kernel: Size of square structuring element for erosion. Defaults to 3.
+        erosion_iterations: Number of morphological erosion passes. Defaults to 1.
+
+    Returns:
+        A tuple containing:
+            - img (np.ndarray): Original BGR image.
+            - mask (np.ndarray): Refined single-channel binary mask (255=foreground, 0=background).
+            - used_aruco (bool): True if 4 ArUco markers were detected on the sheet, False otherwise.
+
+    Raises:
+        ValueError: If the image cannot be read from `img_path`.
+    """
+    from rembg import remove
+
     img = cv2.imread(img_path)
     if img is None:
         raise ValueError(f"Could not read image: {img_path}")
@@ -64,7 +88,9 @@ def segment_single_image(
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     guide_float = gray.astype(np.float32) / 255.0
     mask_float = (mask > 0).astype(np.float32)
-    refined_float = cv2.ximgproc.guidedFilter(guide=guide_float, src=mask_float, radius=4, eps=1e-4)
+    refined_float = cv2.ximgproc.guidedFilter(
+        guide=guide_float, src=mask_float, radius=4, eps=1e-4
+    )
     mask = (refined_float > 0.5).astype(np.uint8) * 255
 
     mask = cv2.erode(
@@ -76,7 +102,18 @@ def segment_single_image(
     return img, mask, used_aruco
 
 
-def fit_circle_pratt(points):
+def fit_circle_pratt(points: np.ndarray) -> Tuple[float, float, float]:
+    """Fits analytical circle parameters (xc, yc, R) to a 2D point cloud using Pratt's method.
+
+    Solves the algebraic circle equation (x-xc)^2 + (y-yc)^2 = R^2 using linear least squares
+    on shifted coordinates.
+
+    Args:
+        points: (N, 2) numpy array of 2D point coordinates.
+
+    Returns:
+        Tuple of floats (xc, yc, R) representing center X, center Y, and radius.
+    """
     x = points[:, 0]
     y = points[:, 1]
     x_m = np.mean(x)
@@ -91,11 +128,26 @@ def fit_circle_pratt(points):
     R = np.sqrt(uc**2 + vc**2 + c)
     xc = uc + x_m
     yc = vc + y_m
-    return xc, yc, R
+    return float(xc), float(yc), float(R)
 
-def ransac_line_fit(points, centroid, max_iterations=400, threshold=1.5):
+
+def ransac_line_fit(
+    points: np.ndarray, centroid: np.ndarray, max_iterations: int = 400, threshold: float = 1.5
+) -> Optional[Tuple[float, float, float]]:
+    """Fits 2D line equation parameters (nx, ny, d) to noisy points using RANSAC.
+
+    Args:
+        points: (N, 2) array of contour points.
+        centroid: (2,) array containing the overall shape centroid [cx, cy].
+        max_iterations: Maximum RANSAC iteration count. Defaults to 400.
+        threshold: Maximum perpendicular distance for inliers in pixels. Defaults to 1.5.
+
+    Returns:
+        Tuple of (nx, ny, d) representing normal vector (nx, ny) and offset d (nx*x + ny*y = d),
+        or None if insufficient inliers are found.
+    """
     best_line = None
-    best_inliers = []
+    best_inliers: List[int] = []
     n_pts = len(points)
     if n_pts < 2:
         return None
@@ -114,20 +166,39 @@ def ransac_line_fit(points, centroid, max_iterations=400, threshold=1.5):
         dists = np.abs(nx * points[:, 0] + ny * points[:, 1] - d)
         inliers = np.where(dists < threshold)[0]
         if len(inliers) > len(best_inliers):
-            best_inliers = inliers
+            best_inliers = list(inliers)
             best_line = (nx, ny, d)
     if best_line is not None and len(best_inliers) >= 2:
         inlier_pts = points[best_inliers]
-        vx, vy, x0, y0 = cv2.fitLine(inlier_pts.astype(np.float32), cv2.DIST_L2, 0, 0.01, 0.01).squeeze()
+        vx, vy, x0, y0 = cv2.fitLine(
+            inlier_pts.astype(np.float32), cv2.DIST_L2, 0, 0.01, 0.01
+        ).squeeze()
         nx, ny = -vy, vx
         v_out = np.array([x0 - centroid[0], y0 - centroid[1]])
         if nx * v_out[0] + ny * v_out[1] < 0:
             nx, ny = -nx, -ny
         d = nx * x0 + ny * y0
-        return (nx, ny, d)
+        return (float(nx), float(ny), float(d))
     return None
 
-def get_fillet_arc(line1, line2, centroid, R):
+
+def get_fillet_arc(
+    line1: Tuple[float, float, float],
+    line2: Tuple[float, float, float],
+    centroid: np.ndarray,
+    R: float,
+) -> np.ndarray:
+    """Computes dense 2D arc points connecting two intersecting line equations with radius R.
+
+    Args:
+        line1: (nx1, ny1, d1) normal line parameters.
+        line2: (nx2, ny2, d2) normal line parameters.
+        centroid: Shape centroid used to orient the arc inward/outward.
+        R: Desired fillet radius in pixels/millimeters.
+
+    Returns:
+        (30, 2) numpy array of arc points along the fillet curve.
+    """
     nx1, ny1, d1 = line1
     nx2, ny2, d2 = line2
     A = np.array([[nx1, ny1], [nx2, ny2]])
@@ -135,7 +206,7 @@ def get_fillet_arc(line1, line2, centroid, R):
     I = np.linalg.solve(A, b)
     bisector = np.array([nx1 + nx2, ny1 + ny2])
     bisector = bisector / np.linalg.norm(bisector)
-    dot_val = np.clip(nx1*nx2 + ny1*ny2, -1.0, 1.0)
+    dot_val = np.clip(nx1 * nx2 + ny1 * ny2, -1.0, 1.0)
     theta = np.arccos(dot_val)
     d_IC = R / np.sin(theta / 2.0)
     C = I - d_IC * bisector
@@ -149,20 +220,37 @@ def get_fillet_arc(line1, line2, centroid, R):
     elif diff < -np.pi:
         ang2 += 2 * np.pi
     arc_thetas = np.linspace(ang1, ang2, 30)
-    arc_pts = np.column_stack([C[0] + R * np.cos(arc_thetas), C[1] + R * np.sin(arc_thetas)])
-    return arc_pts
+    return np.column_stack([C[0] + R * np.cos(arc_thetas), C[1] + R * np.sin(arc_thetas)])
 
-def apply_pratt_arc_fit_contour(contour, x_min, y_min, w, h, centroid):
+
+def apply_pratt_arc_fit_contour(
+    contour: np.ndarray, x_min: float, y_min: float, w: float, h: float, centroid: np.ndarray
+) -> np.ndarray:
+    """Refines corner vertices of a contour by fitting Pratt circular arcs.
+
+    Args:
+        contour: Input (N, 1, 2) contour array.
+        x_min: Bounding box minimum X.
+        y_min: Bounding box minimum Y.
+        w: Bounding box width.
+        h: Bounding box height.
+        centroid: (2,) shape centroid point.
+
+    Returns:
+        Modified (N, 1, 2) contour array with smooth Pratt arc corners.
+    """
     corners = [
-        (x_min, y_min), (x_min + w, y_min),
-        (x_min + w, y_min + h), (x_min, y_min + h)
+        (x_min, y_min),
+        (x_min + w, y_min),
+        (x_min + w, y_min + h),
+        (x_min, y_min + h),
     ]
     modified_contour = contour.copy()
     n = len(contour)
     if n < 80:
         return modified_contour
     for cx, cy in corners:
-        dists = (contour[:, 0, 0] - cx)**2 + (contour[:, 0, 1] - cy)**2
+        dists = (contour[:, 0, 0] - cx) ** 2 + (contour[:, 0, 1] - cy) ** 2
         corner_idx = np.argmin(dists)
         indices = [(corner_idx + j) % n for j in range(-40, 40)]
         corner_pts = contour[indices].squeeze()
@@ -183,13 +271,22 @@ def apply_pratt_arc_fit_contour(contour, x_min, y_min, w, h, centroid):
             thetas = np.linspace(theta_start, theta_end, 40)
             arc_pts = np.column_stack([xc + R * np.cos(thetas), yc + R * np.sin(thetas)])
             for k, idx in enumerate(indices[20:61]):
-                modified_contour[idx, 0, 0] = arc_pts[min(k, len(arc_pts)-1), 0]
-                modified_contour[idx, 0, 1] = arc_pts[min(k, len(arc_pts)-1), 1]
-        except Exception:
-            pass
+                modified_contour[idx, 0, 0] = arc_pts[min(k, len(arc_pts) - 1), 0]
+                modified_contour[idx, 0, 1] = arc_pts[min(k, len(arc_pts) - 1), 1]
+        except Exception as err:
+            logger.warning(f"Pratt arc fit failed for corner at ({cx}, {cy}): {err}")
     return modified_contour
 
-def fit_contour_spline(contour):
+
+def fit_contour_spline(contour: np.ndarray) -> np.ndarray:
+    """Fits smooth periodic cubic B-spline curves to contour points.
+
+    Args:
+        contour: Input (N, 1, 2) contour array.
+
+    Returns:
+        Resampled (M, 1, 2) smooth spline contour array.
+    """
     n = len(contour)
     if n < 10:
         return contour
@@ -201,15 +298,26 @@ def fit_contour_spline(contour):
     if len(contour_ds) < 5:
         return contour
     try:
-        from scipy.interpolate import splprep, splev
+        from scipy.interpolate import splev, splprep
+
         tck, u = splprep([contour_ds[:, 0], contour_ds[:, 1]], s=200, per=True)
         u_new = np.linspace(0, 1, min(300, n))
         spline_pts = np.column_stack(splev(u_new, tck))
         return spline_pts.astype(np.float32).reshape(-1, 1, 2)
-    except Exception:
+    except Exception as err:
+        logger.warning(f"Spline fitting failed: {err}")
         return contour
 
-def apply_contour_gaussian_filter(contour):
+
+def apply_contour_gaussian_filter(contour: np.ndarray) -> np.ndarray:
+    """Applies 1D Gaussian blurring across X and Y coordinate arrays of a contour.
+
+    Args:
+        contour: Input (N, 1, 2) contour array.
+
+    Returns:
+        Smoothed (N, 1, 2) contour array.
+    """
     n = len(contour)
     if n < 5:
         return contour
@@ -219,24 +327,45 @@ def apply_contour_gaussian_filter(contour):
     kernel_size = 15
     sigma = 3.0
     try:
-        smooth_x = cv2.GaussianBlur(pts[:, 0].astype(np.float32).reshape(-1, 1), (1, kernel_size), sigma).squeeze()
-        smooth_y = cv2.GaussianBlur(pts[:, 1].astype(np.float32).reshape(-1, 1), (1, kernel_size), sigma).squeeze()
+        smooth_x = cv2.GaussianBlur(
+            pts[:, 0].astype(np.float32).reshape(-1, 1), (1, kernel_size), sigma
+        ).squeeze()
+        smooth_y = cv2.GaussianBlur(
+            pts[:, 1].astype(np.float32).reshape(-1, 1), (1, kernel_size), sigma
+        ).squeeze()
         smooth_pts = np.column_stack([smooth_x, smooth_y])
         return smooth_pts.astype(np.float32).reshape(-1, 1, 2)
-    except Exception:
+    except Exception as err:
+        logger.warning(f"Gaussian filtering failed: {err}")
         return contour
 
-def apply_ransac_cad_reconstruction(contour, x_min, y_min, w, h, centroid):
+
+def apply_ransac_cad_reconstruction(
+    contour: np.ndarray, x_min: float, y_min: float, w: float, h: float, centroid: np.ndarray
+) -> Optional[np.ndarray]:
+    """Reconstructs CAD rectangle geometry with RANSAC edge fitting and fillet corner arcs.
+
+    Args:
+        contour: Input (N, 1, 2) contour.
+        x_min: Minimum X bound.
+        y_min: Minimum Y bound.
+        w: Width of bounding box.
+        h: Height of bounding box.
+        centroid: (2,) centroid coordinates.
+
+    Returns:
+        Reconstructed (M, 1, 2) CAD contour array, or None if RANSAC lines fail to fit.
+    """
     n = len(contour)
     if n < 30:
         return None
     pts = contour.squeeze()
     if len(pts.shape) != 2:
         return None
-    top_pts = pts[(pts[:, 1] < y_min + 0.15*h) & (pts[:, 0] > x_min + 0.2*w) & (pts[:, 0] < x_min + 0.8*w)]
-    bottom_pts = pts[(pts[:, 1] > y_min + 0.85*h) & (pts[:, 0] > x_min + 0.2*w) & (pts[:, 0] < x_min + 0.8*w)]
-    left_pts = pts[(pts[:, 0] < x_min + 0.15*w) & (pts[:, 1] > y_min + 0.2*h) & (pts[:, 1] < y_min + 0.8*h)]
-    right_pts = pts[(pts[:, 0] > x_min + 0.85*w) & (pts[:, 1] > y_min + 0.2*h) & (pts[:, 1] < y_min + 0.8*h)]
+    top_pts = pts[(pts[:, 1] < y_min + 0.15 * h) & (pts[:, 0] > x_min + 0.2 * w) & (pts[:, 0] < x_min + 0.8 * w)]
+    bottom_pts = pts[(pts[:, 1] > y_min + 0.85 * h) & (pts[:, 0] > x_min + 0.2 * w) & (pts[:, 0] < x_min + 0.8 * w)]
+    left_pts = pts[(pts[:, 0] < x_min + 0.15 * w) & (pts[:, 1] > y_min + 0.2 * h) & (pts[:, 1] < y_min + 0.8 * h)]
+    right_pts = pts[(pts[:, 0] > x_min + 0.85 * w) & (pts[:, 1] > y_min + 0.2 * h) & (pts[:, 1] < y_min + 0.8 * h)]
     top_line = ransac_line_fit(top_pts, centroid)
     bottom_line = ransac_line_fit(bottom_pts, centroid)
     left_line = ransac_line_fit(left_pts, centroid)
@@ -249,19 +378,52 @@ def apply_ransac_cad_reconstruction(contour, x_min, y_min, w, h, centroid):
         arc_tr = get_fillet_arc(top_line, right_line, centroid, R_fillet)
         arc_br = get_fillet_arc(right_line, bottom_line, centroid, R_fillet)
         arc_bl = get_fillet_arc(bottom_line, left_line, centroid, R_fillet)
-        reconstructed = np.vstack([
-            arc_tl,
-            arc_tr,
-            arc_br,
-            arc_bl,
-            arc_tl[0]
-        ])
+        reconstructed = np.vstack([arc_tl, arc_tr, arc_br, arc_bl, arc_tl[0]])
         return reconstructed.astype(np.float32).reshape(-1, 1, 2)
-    except Exception:
+    except Exception as err:
+        logger.warning(f"RANSAC CAD reconstruction failed: {err}")
         return None
 
+
+def transform_contour_by_strategy(
+    contour_f: np.ndarray,
+    curve_strategy: str,
+    x_min_f: float,
+    y_min_f: float,
+    w_f: float,
+    h_f: float,
+    centroid_f: np.ndarray,
+) -> np.ndarray:
+    """Dispatches contour processing to the specified curve fitting strategy.
+
+    Args:
+        contour_f: (N, 1, 2) float32 contour coordinates.
+        curve_strategy: Strategy name ('current', 'pratt', 'spline', 'gaussian', 'ransac').
+        x_min_f: Minimum X bound.
+        y_min_f: Minimum Y bound.
+        w_f: Width of bounding box.
+        h_f: Height of bounding box.
+        centroid_f: Shape centroid [cx, cy].
+
+    Returns:
+        Transformed (M, 1, 2) contour array.
+    """
+    working_contour = contour_f.copy()
+    if curve_strategy == "pratt":
+        return apply_pratt_arc_fit_contour(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
+    elif curve_strategy == "spline":
+        return fit_contour_spline(working_contour)
+    elif curve_strategy == "gaussian":
+        return apply_contour_gaussian_filter(working_contour)
+    elif curve_strategy == "ransac":
+        recon = apply_ransac_cad_reconstruction(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
+        if recon is not None:
+            return recon
+    return working_contour
+
+
 def vectorize_single_image(
-    mask,
+    mask: np.ndarray,
     scale: float,
     output_dxf: str,
     paper_h: float,
@@ -273,25 +435,47 @@ def vectorize_single_image(
     epsilon_max: float = 2.5,
     snap_angle: float = 10.0,
     snap_min_length: float = 20.0,
-    warped_img=None,
+    warped_img: Optional[np.ndarray] = None,
     detect_details: bool = False,
     details_threshold1: int = 50,
     details_threshold2: int = 150,
     curve_strategy: str = "current",
 ) -> dict:
+    """Extracts vector geometry entities from binary mask and saves DXF file.
+
+    Args:
+        mask: Binary mask image.
+        scale: Millimeter scale factor (pixels per mm).
+        output_dxf: Absolute path where result.dxf will be saved.
+        paper_h: Calibration sheet height in mm.
+        min_hole_area: Minimum area cutoff for interior hole cutouts. Defaults to 500.
+        min_outer_area: Minimum area cutoff for outer contours. Defaults to 100.
+        circle_ratio: Area ratio threshold for circle matching. Defaults to 0.85.
+        epsilon_min: Minimum Douglas-Peucker epsilon limits. Defaults to 0.5.
+        epsilon_max: Maximum Douglas-Peucker epsilon limits. Defaults to 2.5.
+        snap_angle: Orthogonal snap angle limit in degrees. Defaults to 10.0.
+        snap_min_length: Minimum segment length for snapping. Defaults to 20.0.
+        warped_img: Optional warped RGB image for surface detail extraction.
+        detect_details: If True, extracts fine detail lines on DETAILS layer. Defaults to False.
+        details_threshold1: Canny threshold 1 for detail extraction. Defaults to 50.
+        details_threshold2: Canny threshold 2 for detail extraction. Defaults to 150.
+        curve_strategy: Curve fitting strategy algorithm name. Defaults to 'current'.
+
+    Returns:
+        Dictionary report containing entity metrics, bounding box dimensions, and entity array.
+    """
     height = mask.shape[0]
 
     contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
 
     doc = ezdxf.new("R2010")
-    
     if "OUTER" not in doc.layers:
         doc.layers.new("OUTER", dxfattribs={"color": 7})
     if "HOLES" not in doc.layers:
         doc.layers.new("HOLES", dxfattribs={"color": 1})
     if "DETAILS" not in doc.layers:
         doc.layers.new("DETAILS", dxfattribs={"color": 3})
-        
+
     msp = doc.modelspace()
 
     entity_count = 0
@@ -301,7 +485,7 @@ def vectorize_single_image(
     bbox_max_x, bbox_max_y = float("-inf"), float("-inf")
     total_perimeter = 0.0
 
-    entities = []
+    entities: List[dict] = []
 
     if hierarchy is not None:
         for i, contour in enumerate(contours):
@@ -309,7 +493,6 @@ def vectorize_single_image(
             layer = "HOLES" if is_hole else "OUTER"
 
             contour_f = np.array(contour, dtype=np.float32)
-
             area = cv2.contourArea(contour_f)
 
             if is_hole and area < min_hole_area:
@@ -350,20 +533,12 @@ def vectorize_single_image(
                     total_perimeter += 2 * np.pi * radius_mm
                     continue
 
-            working_contour = contour_f.copy()
-            x_min_f, y_min_f, w_f, h_f = cv2.boundingRect(working_contour)
-            centroid_f = np.array([x_min_f + w_f/2, y_min_f + h_f/2])
-            
-            if curve_strategy == 'pratt':
-                working_contour = apply_pratt_arc_fit_contour(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
-            elif curve_strategy == 'spline':
-                working_contour = fit_contour_spline(working_contour)
-            elif curve_strategy == 'gaussian':
-                working_contour = apply_contour_gaussian_filter(working_contour)
-            elif curve_strategy == 'ransac':
-                recon = apply_ransac_cad_reconstruction(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
-                if recon is not None:
-                    working_contour = recon
+            x_min_f, y_min_f, w_f, h_f = cv2.boundingRect(contour_f)
+            centroid_f = np.array([x_min_f + w_f / 2, y_min_f + h_f / 2])
+
+            working_contour = transform_contour_by_strategy(
+                contour_f, curve_strategy, x_min_f, y_min_f, w_f, h_f, centroid_f
+            )
 
             if curve_strategy == "current":
                 points = vectorize_contour(
@@ -471,6 +646,33 @@ def run_pipeline(
     details_threshold2: int = 150,
     curve_strategy: str = "current",
 ) -> dict:
+    """Executes end-to-end segmentation, homography warping, and vectorization workflow.
+
+    Args:
+        input_path: Path to uploaded photo.
+        output_dir: Job output directory.
+        paper_size: Standard calibration paper size name ('a4', 'a3', 'a5', 'letter', 'legal').
+        mask_threshold: Segmentation threshold (1-255).
+        erosion_kernel: Morphological erosion kernel size.
+        erosion_iterations: Erosion pass count.
+        min_hole_area: Min area threshold for interior hole cutouts.
+        min_outer_area: Min area threshold for outer bounds.
+        circle_ratio: Area ratio threshold for circle matching.
+        epsilon_min: Min Douglas-Peucker epsilon parameter.
+        epsilon_max: Max Douglas-Peucker epsilon parameter.
+        snap_angle: Max angle tolerance in degrees for orthogonal line snapping.
+        snap_min_length: Min segment length for snapping.
+        marker_offset_x: ArUco marker center X offset from page boundary in mm.
+        marker_offset_y: ArUco marker center Y offset from page boundary in mm.
+        marker_clear_radius: Radius around marker centers to clear from mask in mm.
+        detect_details: Toggle surface detail extraction onto DETAILS layer.
+        details_threshold1: Canny threshold 1.
+        details_threshold2: Canny threshold 2.
+        curve_strategy: Curve fitting algorithm strategy name.
+
+    Returns:
+        JSON-serializable report dictionary containing all CAD vector entities and metrics.
+    """
     paper_w, paper_h = PAPER_SIZES.get(paper_size.lower(), PAPER_SIZES["a4"])
 
     result_dxf = os.path.join(output_dir, "result.dxf")
@@ -480,7 +682,7 @@ def run_pipeline(
     result_holes = os.path.join(output_dir, "result.holes.png")
     result_json = os.path.join(output_dir, "result.json")
 
-    print(f"[worker] Segmenting {input_path}...", flush=True)
+    logger.info(f"Segmenting {input_path}...")
     img, mask, used_aruco = segment_single_image(
         input_path,
         rembg_session,
@@ -520,9 +722,7 @@ def run_pipeline(
     rgba = cv2.cvtColor(warped_img, cv2.COLOR_BGR2BGRA)
     rgba[:, :, 3] = warped_mask
     cv2.imwrite(result_dbg, rgba)
-
     cv2.imwrite(result_original, warped_img)
-
     cv2.imwrite(result_mask, warped_mask)
 
     holes_mask = np.zeros_like(warped_mask)
@@ -535,7 +735,7 @@ def run_pipeline(
                 cv2.drawContours(holes_mask, [contour], -1, 255, -1)
     cv2.imwrite(result_holes, holes_mask)
 
-    print(f"[worker] Vectorizing...", flush=True)
+    logger.info("Vectorizing...")
     report = vectorize_single_image(
         warped_mask,
         scale,
@@ -559,17 +759,19 @@ def run_pipeline(
     with open(result_json, "w") as f:
         json.dump(report, f, indent=2)
 
-    print(f"[worker] Done — {report['totalEntities']} entities", flush=True)
+    logger.info(f"Done — {report['totalEntities']} entities")
     return report
 
 
 @app.route("/health", methods=["GET"])
 def health():
+    """Health check endpoint returning worker status."""
     return jsonify({"ok": True, "model": "birefnet-general-lite"})
 
 
 @app.route("/process", methods=["POST"])
 def process():
+    """HTTP endpoint processing full photographic image to DXF vector package."""
     data = request.get_json()
     if not data:
         return jsonify({"success": False, "message": "No JSON body"}), 400
@@ -607,26 +809,10 @@ def process():
                 params[py_key] = default
 
     if not input_path or not output_dir:
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "message": "inputPath and outputDir are required",
-                }
-            ),
-            400,
-        )
+        return jsonify({"success": False, "message": "inputPath and outputDir are required"}), 400
 
     if not os.path.isfile(input_path):
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "message": f"Input file not found: {input_path}",
-                }
-            ),
-            400,
-        )
+        return jsonify({"success": False, "message": f"Input file not found: {input_path}"}), 400
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -634,21 +820,13 @@ def process():
         report = run_pipeline(input_path, output_dir, paper_size, **params)
         return jsonify({"success": True, "report": report})
     except Exception as e:
-        traceback.print_exc()
-        return (
-            jsonify(
-                {
-                    "success": False,
-                    "message": str(e),
-                    "traceback": traceback.format_exc(),
-                }
-            ),
-            500,
-        )
+        logger.error(f"Error processing pipeline: {e}", exc_info=True)
+        return jsonify({"success": False, "message": str(e), "traceback": traceback.format_exc()}), 500
 
 
 @app.route("/process_region", methods=["POST"])
 def process_region_route():
+    """HTTP endpoint reprocessing selective bounding box sub-region with custom curve fitting strategy."""
     data = request.get_json()
     if not data:
         return jsonify({"success": False, "message": "No JSON body"}), 400
@@ -665,10 +843,8 @@ def process_region_route():
     try:
         paper_w, paper_h = PAPER_SIZES.get(paper_size.lower(), PAPER_SIZES["a4"])
         img, mask, _ = segment_single_image(input_path, rembg_session, mask_threshold=240)
-        
-        H, scale, marker_centers = get_homography(
-            input_path, paper_w, paper_h
-        )
+
+        H, scale, _ = get_homography(input_path, paper_w, paper_h)
         if H is not None:
             work_w = int(paper_w * scale)
             work_h = int(paper_h * scale)
@@ -681,7 +857,7 @@ def process_region_route():
         min_x, min_y, max_x, max_y = bbox
 
         contours, hierarchy = cv2.findContours(warped_mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-        entities = []
+        entities: List[dict] = []
 
         if hierarchy is not None:
             for i, contour in enumerate(contours):
@@ -702,8 +878,8 @@ def process_region_route():
                 c_cx = centroid_f[0] / scale
                 c_cy = (height - centroid_f[1]) / scale
 
-                overlaps = (c_max_x >= min_x and c_min_x <= max_x and c_max_y >= min_y and c_min_y <= max_y)
-                center_in = (min_x <= c_cx <= max_x and min_y <= c_cy <= max_y)
+                overlaps = c_max_x >= min_x and c_min_x <= max_x and c_max_y >= min_y and c_min_y <= max_y
+                center_in = min_x <= c_cx <= max_x and min_y <= c_cy <= max_y
 
                 if not (overlaps or center_in):
                     continue
@@ -716,46 +892,45 @@ def process_region_route():
                     cx_mm = float(cx) / scale
                     cy_mm = float(height - cy) / scale
                     radius_mm = float(radius) / scale
-                    entities.append({
-                        "type": "circle",
-                        "layer": layer,
-                        "cx": round(cx_mm, 4),
-                        "cy": round(cy_mm, 4),
-                        "r": round(radius_mm, 4),
-                    })
+                    entities.append(
+                        {
+                            "type": "circle",
+                            "layer": layer,
+                            "cx": round(cx_mm, 4),
+                            "cy": round(cy_mm, 4),
+                            "r": round(radius_mm, 4),
+                        }
+                    )
                 else:
-                    working_contour = contour_f.copy()
-                    if curve_strategy == "pratt":
-                        working_contour = apply_pratt_arc_fit_contour(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
-                    elif curve_strategy == "spline":
-                        working_contour = fit_contour_spline(working_contour)
-                    elif curve_strategy == "gaussian":
-                        working_contour = apply_contour_gaussian_filter(working_contour)
-                    elif curve_strategy == "ransac":
-                        recon = apply_ransac_cad_reconstruction(working_contour, x_min_f, y_min_f, w_f, h_f, centroid_f)
-                        if recon is not None:
-                            working_contour = recon
+                    working_contour = transform_contour_by_strategy(
+                        contour_f, curve_strategy, x_min_f, y_min_f, w_f, h_f, centroid_f
+                    )
 
                     if curve_strategy == "current":
                         pts = vectorize_contour(working_contour, height, scale)
                     else:
-                        pts = [(float(p[0, 0]) / scale, float(height - p[0, 1]) / scale) for p in working_contour]
+                        pts = [
+                            (float(p[0, 0]) / scale, float(height - p[0, 1]) / scale)
+                            for p in working_contour
+                        ]
 
                     if pts:
-                        entities.append({
-                            "type": "polyline",
-                            "layer": layer,
-                            "points": [[round(px, 4), round(py, 4)] for px, py in pts],
-                            "closed": True,
-                        })
+                        entities.append(
+                            {
+                                "type": "polyline",
+                                "layer": layer,
+                                "points": [[round(px, 4), round(py, 4)] for px, py in pts],
+                                "closed": True,
+                            }
+                        )
 
         return jsonify({"success": True, "entities": entities})
     except Exception as e:
-        traceback.print_exc()
+        logger.error(f"Error processing region: {e}", exc_info=True)
         return jsonify({"success": False, "message": str(e)}), 500
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("DXFERPY_PORT", 8788))
-    print(f"[worker] Starting on port {port}...", flush=True)
+    logger.info(f"Starting on port {port}...")
     app.run(host="127.0.0.1", port=port, debug=False)

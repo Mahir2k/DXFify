@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ConversionApiError, runConversion } from './api/convertClient';
 import { TopBar } from './components/TopBar';
 import { Workspace } from './components/Workspace';
+import { computeBoundingBox } from './utils/geometryUtils';
 import type {
   ConversionErrorDetails,
   ConversionReport,
@@ -12,6 +13,7 @@ import type {
   ToolId,
   Viewport,
   GeometryEntity,
+  ActiveDrawingState,
 } from './types';
 
 const defaultSettings: ConversionSettings = {
@@ -82,29 +84,11 @@ function generateDxfString(entities: GeometryEntity[]): string {
 }
 
 function generateSvgString(entities: GeometryEntity[]): string {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const ent of entities) {
-    if (ent.type === 'circle' && ent.cx != null && ent.cy != null && ent.r != null) {
-      minX = Math.min(minX, ent.cx - ent.r);
-      minY = Math.min(minY, ent.cy - ent.r);
-      maxX = Math.max(maxX, ent.cx + ent.r);
-      maxY = Math.max(maxY, ent.cy + ent.r);
-    } else if (ent.type === 'polyline' && ent.points) {
-      for (const pt of ent.points) {
-        minX = Math.min(minX, pt[0]);
-        minY = Math.min(minY, pt[1]);
-        maxX = Math.max(maxX, pt[0]);
-        maxY = Math.max(maxY, pt[1]);
-      }
-    }
-  }
-
-  if (minX === Infinity) {
-    minX = 0; minY = 0; maxX = 100; maxY = 100;
-  } else {
-    minX -= 5; minY -= 5; maxX += 5; maxY += 5;
-  }
-
+  const bbox = computeBoundingBox(entities);
+  const minX = bbox.width > 0 ? bbox.minX - 5 : 0;
+  const minY = bbox.height > 0 ? bbox.minY - 5 : 0;
+  const maxX = bbox.width > 0 ? bbox.maxX + 5 : 100;
+  const maxY = bbox.height > 0 ? bbox.maxY + 5 : 100;
   const w = maxX - minX;
   const h = maxY - minY;
 
@@ -132,29 +116,11 @@ function generateSvgString(entities: GeometryEntity[]): string {
 }
 
 function generatePdfBlob(entities: GeometryEntity[]): Blob {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const ent of entities) {
-    if (ent.type === 'circle' && ent.cx != null && ent.cy != null && ent.r != null) {
-      minX = Math.min(minX, ent.cx - ent.r);
-      minY = Math.min(minY, ent.cy - ent.r);
-      maxX = Math.max(maxX, ent.cx + ent.r);
-      maxY = Math.max(maxY, ent.cy + ent.r);
-    } else if (ent.type === 'polyline' && ent.points) {
-      for (const pt of ent.points) {
-        minX = Math.min(minX, pt[0]);
-        minY = Math.min(minY, pt[1]);
-        maxX = Math.max(maxX, pt[0]);
-        maxY = Math.max(maxY, pt[1]);
-      }
-    }
-  }
-
-  if (minX === Infinity) {
-    minX = 0; minY = 0; maxX = 100; maxY = 100;
-  } else {
-    minX -= 5; minY -= 5; maxX += 5; maxY += 5;
-  }
-
+  const bbox = computeBoundingBox(entities);
+  const minX = bbox.width > 0 ? bbox.minX - 5 : 0;
+  const minY = bbox.height > 0 ? bbox.minY - 5 : 0;
+  const maxX = bbox.width > 0 ? bbox.maxX + 5 : 100;
+  const maxY = bbox.height > 0 ? bbox.maxY + 5 : 100;
   const w = maxX - minX;
   const h = maxY - minY;
 
@@ -587,11 +553,11 @@ export default function App() {
       />
 
       {showSubRegionModal && subRegionBbox && (
-        <div className="gimp-modal-overlay" onClick={() => setShowSubRegionModal(false)}>
+        <div className="gimp-modal-overlay" onClick={() => setShowSubRegionModal(false)} role="dialog" aria-modal="true" aria-labelledby="subregion-modal-title">
           <div className="gimp-modal-box" onClick={(e) => e.stopPropagation()}>
             <div className="gimp-modal-header">
-              <span>Sub-Region Reprocessing</span>
-              <button className="gimp-close-btn" onClick={() => setShowSubRegionModal(false)}>×</button>
+              <span id="subregion-modal-title">Sub-Region Reprocessing</span>
+              <button className="gimp-close-btn" onClick={() => setShowSubRegionModal(false)} aria-label="Close dialog">×</button>
             </div>
             <div className="gimp-modal-body">
               <div className="gimp-info-text" style={{ marginBottom: '12px' }}>
@@ -602,7 +568,7 @@ export default function App() {
                   <span>Region Curve Strategy</span>
                   <select
                     value={subRegionStrategy}
-                    onChange={(e) => setSubRegionStrategy(e.target.value as any)}
+                    onChange={(e) => setSubRegionStrategy(e.target.value as 'current' | 'pratt' | 'spline' | 'gaussian' | 'ransac')}
                   >
                     <option value="current">Current (Douglas-Peucker)</option>
                     <option value="pratt">Strategy 1: Pratt Circle Fits</option>
@@ -671,11 +637,11 @@ export default function App() {
       )}
 
       {showRunConfirm && (
-        <div className="gimp-modal-overlay" onClick={() => setShowRunConfirm(false)}>
+        <div className="gimp-modal-overlay" onClick={() => setShowRunConfirm(false)} role="dialog" aria-modal="true" aria-labelledby="run-modal-title">
           <div className="gimp-modal-box" onClick={(e) => e.stopPropagation()}>
             <div className="gimp-modal-header">
-              <span>Confirm Conversion</span>
-              <button className="gimp-close-btn" onClick={() => setShowRunConfirm(false)}>×</button>
+              <span id="run-modal-title">Confirm Conversion</span>
+              <button className="gimp-close-btn" onClick={() => setShowRunConfirm(false)} aria-label="Close dialog">×</button>
             </div>
             <div className="gimp-modal-body">
               <div className="gimp-preview-section">
@@ -699,7 +665,7 @@ export default function App() {
                     <span>Sheet size</span>
                     <select
                       value={conversionSettings.sheetSize}
-                      onChange={(e) => setConversionSettings({ ...conversionSettings, sheetSize: e.target.value as any })}
+                      onChange={(e) => setConversionSettings({ ...conversionSettings, sheetSize: e.target.value as ConversionSettings['sheetSize'] })}
                     >
                       <option value="a5">A5</option>
                       <option value="a4">A4</option>
@@ -715,7 +681,7 @@ export default function App() {
                     <span>Curve Strategy</span>
                     <select
                       value={conversionSettings.curveStrategy ?? 'current'}
-                      onChange={(e) => setConversionSettings({ ...conversionSettings, curveStrategy: e.target.value as any })}
+                      onChange={(e) => setConversionSettings({ ...conversionSettings, curveStrategy: e.target.value as ConversionSettings['curveStrategy'] })}
                     >
                       <option value="current">Current (Douglas-Peucker)</option>
                       <option value="pratt">Strategy 1: Pratt Circle Fits</option>

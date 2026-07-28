@@ -41,27 +41,27 @@ export interface SubRegionReprocessRequest {
 
 export interface ConversionSettings {
   sheetSize: 'a4' | 'a3' | 'a2' | 'a1' | 'a5' | 'letter' | 'legal';
-  
-  maskThreshold?: number;       
-  erosionKernel?: number;       
-  erosionIterations?: number;   
-  
-  minHoleArea?: number;         
-  minOuterArea?: number;        
-  circleRatio?: number;         
-  
-  epsilonMin?: number;          
-  epsilonMax?: number;          
-  snapAngle?: number;           
-  snapMinLength?: number;       
-  
-  markerOffsetX?: number;       
-  markerOffsetY?: number;       
-  markerClearRadius?: number;   
+
+  maskThreshold?: number;
+  erosionKernel?: number;
+  erosionIterations?: number;
+
+  minHoleArea?: number;
+  minOuterArea?: number;
+  circleRatio?: number;
+
+  epsilonMin?: number;
+  epsilonMax?: number;
+  snapAngle?: number;
+  snapMinLength?: number;
+
+  markerOffsetX?: number;
+  markerOffsetY?: number;
+  markerClearRadius?: number;
   // Detail extraction
-  detectDetails?: boolean;      // default false
-  detailsThreshold1?: number;   // default 50
-  detailsThreshold2?: number;   // default 150
+  detectDetails?: boolean; // default false
+  detailsThreshold1?: number; // default 50
+  detailsThreshold2?: number; // default 150
   curveStrategy?: 'current' | 'pratt' | 'spline' | 'gaussian' | 'ransac';
 }
 
@@ -74,6 +74,21 @@ export interface GeometryEntity {
   points?: [number, number][];
   closed?: boolean;
 }
+
+export interface ActiveCircleDrawing {
+  type: 'circle';
+  cx: number;
+  cy: number;
+  r: number;
+}
+
+export interface ActivePolylineDrawing {
+  type: 'polyline';
+  points: [number, number][];
+  closed?: boolean;
+}
+
+export type ActiveDrawingState = ActiveCircleDrawing | ActivePolylineDrawing | null;
 
 export interface ConversionReport {
   success?: boolean;
@@ -122,4 +137,3 @@ export interface Viewport {
   w: number;
   h: number;
 }
-

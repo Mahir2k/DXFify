@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ConversionResult, PreviewTab, Viewport, GeometryEntity } from '../types';
+import type { ConversionResult, PreviewTab, Viewport, GeometryEntity, ActiveDrawingState } from '../types';
 import { Ruler } from './Ruler';
 import {
   solveHomography,
@@ -23,7 +23,7 @@ interface ImagePreviewProps {
   rotationTransforms?: Array<{ angle: number; cx: number; cy: number }>;
   hoveredCoord?: { x: number; y: number } | null;
   onHoverCoord?: (coord: { x: number; y: number } | null) => void;
-  activeDrawing?: any;
+  activeDrawing?: ActiveDrawingState;
   activeHoverSource?: 'dxf' | 'image' | null;
   onHoverSourceChange?: (source: 'dxf' | 'image' | null) => void;
 }

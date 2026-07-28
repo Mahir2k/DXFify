@@ -1,17 +1,75 @@
+"""Object segmentation and ArUco marker detection module.
+
+Provides neural segmentation via BiRefNet lite and ArUco marker localization
+for 1:1 metric calibration sheets.
+"""
+
 import glob
+import logging
 import os
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
-from rembg import new_session, remove
+from rembg import remove
+
+logger = logging.getLogger(__name__)
+
+# Standard target dimensions for ArUco-based rectangular normalization (mm ratio scaled)
+DEFAULT_PORTRAIT_WIDTH = 1000
+DEFAULT_PORTRAIT_HEIGHT = 1577
 
 
-def order_points_by_id(corners, ids):
+def create_birefnet_session() -> Any:
+    """Initializes and returns a BiRefNet ONNX session with hardware provider detection.
+
+    Checks available ONNX Runtime execution providers in order: CUDA -> ROCm -> CPU,
+    and disables arena allocation to keep worker memory usage stable.
+
+    Returns:
+        BiRefNetSessionGeneralLite: Preloaded neural segmentation session instance.
+    """
+    import onnxruntime as ort
+    from rembg.sessions.birefnet_general_lite import BiRefNetSessionGeneralLite
+
+    sess_opts = ort.SessionOptions()
+    sess_opts.enable_cpu_mem_arena = False
+    sess_opts.enable_mem_pattern = False
+    if "OMP_NUM_THREADS" in os.environ:
+        threads = int(os.environ["OMP_NUM_THREADS"])
+        sess_opts.inter_op_num_threads = threads
+        sess_opts.intra_op_num_threads = threads
+    providers = ["CPUExecutionProvider"]
+    available = ort.get_available_providers()
+    if "CUDAExecutionProvider" in available:
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    elif "ROCMExecutionProvider" in available:
+        providers = ["ROCMExecutionProvider", "CPUExecutionProvider"]
+
+    return BiRefNetSessionGeneralLite("birefnet-general-lite", sess_opts, providers=providers)
+
+
+def order_points_by_id(corners: List[np.ndarray], ids: np.ndarray) -> np.ndarray:
+    """Orders detected 4x4 ArUco marker corners into standard quad vertex ordering.
+
+    Mapping:
+        - ID 2 -> Index 0 (Top-Left)
+        - ID 3 -> Index 1 (Top-Right)
+        - ID 0 -> Index 2 (Bottom-Right)
+        - ID 1 -> Index 3 (Bottom-Left)
+
+    Args:
+        corners: Detected marker corner array from OpenCV ArucoDetector.
+        ids: Marker ID array.
+
+    Returns:
+        (4, 2) float32 array of ordered marker center coordinates.
+    """
     id_to_idx = {2: 0, 3: 1, 0: 2, 1: 3}
     rect = np.zeros((4, 2), dtype="float32")
 
-    ids = ids.flatten()
-    for i, marker_id in enumerate(ids):
+    ids_flat = ids.flatten()
+    for i, marker_id in enumerate(ids_flat):
         if marker_id in id_to_idx:
             c = corners[i][0]
             center = (c[0] + c[1] + c[2] + c[3]) / 4
@@ -20,20 +78,36 @@ def order_points_by_id(corners, ids):
     return rect
 
 
-def get_aruco_corners(img):
+def get_aruco_corners(img: np.ndarray) -> Tuple[Optional[List[np.ndarray]], Optional[np.ndarray]]:
+    """Detects 4x4 ArUco calibration markers in an input image.
+
+    Args:
+        img: Input BGR image array.
+
+    Returns:
+        Tuple of (corners, ids) if exactly 4 markers are found, or (None, None) otherwise.
+    """
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
     parameters = cv2.aruco.DetectorParameters()
     detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
 
-    corners, ids, rejected = detector.detectMarkers(gray)
+    corners, ids, _ = detector.detectMarkers(gray)
 
     if ids is not None and len(ids) == 4:
         return corners, ids
     return None, None
 
 
-def process_image(img_path, session):
+def process_image(img_path: str, session: Any) -> None:
+    """Processes a sample image through ArUco warping and background removal.
+
+    Saves transparent RGBA output to `output/rgba_<name>.png` and contour outline image to `output/outline_<name>.png`.
+
+    Args:
+        img_path: Path to sample image file.
+        session: Active BiRefNet session.
+    """
     print(f"Processing {img_path} with BiRefNet...")
     img = cv2.imread(img_path)
     if img is None:
@@ -43,9 +117,9 @@ def process_image(img_path, session):
     corners, ids = get_aruco_corners(img)
     if corners is not None:
         rect = order_points_by_id(corners, ids)
-        width, height = 1000, 1577
+        width, height = DEFAULT_PORTRAIT_WIDTH, DEFAULT_PORTRAIT_HEIGHT
         if np.linalg.norm(rect[1] - rect[0]) > np.linalg.norm(rect[3] - rect[0]):
-            width, height = 1577, 1000
+            width, height = DEFAULT_PORTRAIT_HEIGHT, DEFAULT_PORTRAIT_WIDTH
 
         dst = np.array(
             [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
@@ -86,19 +160,10 @@ if __name__ == "__main__":
             try:
                 os.remove(f)
             except Exception as e:
-                pass
+                logger.warning(f"Could not remove {f}: {e}")
     os.makedirs("output", exist_ok=True)
 
-    import onnxruntime as ort
-    from rembg.sessions.birefnet_general_lite import BiRefNetSessionGeneralLite
-    sess_opts = ort.SessionOptions()
-    sess_opts.enable_cpu_mem_arena = False
-    sess_opts.enable_mem_pattern = False
-    if "OMP_NUM_THREADS" in os.environ:
-        threads = int(os.environ["OMP_NUM_THREADS"])
-        sess_opts.inter_op_num_threads = threads
-        sess_opts.intra_op_num_threads = threads
-    session = BiRefNetSessionGeneralLite("birefnet-general-lite", sess_opts)
+    session = create_birefnet_session()
 
     images = glob.glob("samples/*.jpg") + glob.glob("samples/*.png")
     for img_path in images:

@@ -1,7 +1,7 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile, readdir, unlink, writeFile, stat, rm } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, unlink, writeFile, stat, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -20,17 +20,21 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 await mkdir(jobsRoot, { recursive: true });
 await mkdir(incomingRoot, { recursive: true });
 
-// --- Python Worker Lifecycle Management ---
+// --- Python Worker Lifecycle & Auto-Restart Management ---
 let workerProcess: ChildProcess | null = null;
+let restartAttempts = 0;
+const MAX_RESTART_ATTEMPTS = 5;
+let isShuttingDown = false;
+
 function startPythonWorker() {
-  if (isMockMode) return;
+  if (isMockMode || isShuttingDown) return;
   const pythonExec = path.resolve(repoRoot, 'dxferpy', 'venv', 'bin', 'python3');
   const workerScript = path.resolve(repoRoot, 'dxferpy', 'pipeline_worker.py');
-  
+
   console.log(`[dxfer-server] Spawning Python worker: ${pythonExec} ${workerScript}`);
   workerProcess = spawn(pythonExec, [workerScript], {
     cwd: path.resolve(repoRoot, 'dxferpy'),
-    env: { ...process.env, DXFERPY_PORT: '8788' }
+    env: { ...process.env, DXFERPY_PORT: '8788' },
   });
 
   workerProcess.stdout?.on('data', (data) => {
@@ -42,13 +46,25 @@ function startPythonWorker() {
   });
 
   workerProcess.on('exit', (code) => {
+    workerProcess = null;
     console.log(`[dxfer-server] Python worker exited with code ${code}`);
+    if (!isShuttingDown && code !== 0) {
+      if (restartAttempts < MAX_RESTART_ATTEMPTS) {
+        restartAttempts++;
+        const delayMs = Math.min(1000 * Math.pow(2, restartAttempts - 1), 10000);
+        console.warn(`[dxfer-server] Restarting Python worker in ${delayMs}ms (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS})...`);
+        setTimeout(startPythonWorker, delayMs);
+      } else {
+        console.error(`[dxfer-server] Python worker failed permanently after ${MAX_RESTART_ATTEMPTS} restart attempts.`);
+      }
+    }
   });
 }
 
 startPythonWorker();
 
 const cleanUp = () => {
+  isShuttingDown = true;
   if (workerProcess) {
     console.log('[dxfer-server] Killing Python worker process...');
     workerProcess.kill();
@@ -59,7 +75,7 @@ const cleanUp = () => {
 process.on('exit', cleanUp);
 process.on('SIGINT', () => { cleanUp(); process.exit(); });
 process.on('SIGTERM', () => { cleanUp(); process.exit(); });
-process.on('uncaughtException', (err) => { console.error(err); cleanUp(); process.exit(1); });
+process.on('uncaughtException', (err) => { console.error('[dxfer-server] Uncaught exception:', err); cleanUp(); process.exit(1); });
 
 // --- Expiry Job Sweeping Scheduler ---
 async function sweepExpiredJobs() {
@@ -67,12 +83,15 @@ async function sweepExpiredJobs() {
     const folders = await readdir(jobsRoot);
     const now = Date.now();
     const oneDayMs = 24 * 60 * 60 * 1000;
-    
+
     for (const folder of folders) {
       const jobFolder = path.join(jobsRoot, folder);
-      const folderStat = await stat(jobFolder).catch(() => null);
+      const folderStat = await stat(jobFolder).catch((err) => {
+        console.warn(`[cleanup-cron] Could not stat ${jobFolder}: ${err.message}`);
+        return null;
+      });
       if (!folderStat) continue;
-      
+
       const ageMs = now - folderStat.mtime.getTime();
       if (ageMs > oneDayMs) {
         console.log(`[cleanup-cron] Deleting expired job folder: ${jobFolder} (age: ${(ageMs / 3600000).toFixed(1)} hours)`);
@@ -82,7 +101,8 @@ async function sweepExpiredJobs() {
       }
     }
   } catch (err) {
-    console.error('[cleanup-cron] Error sweeping jobs:', err);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[cleanup-cron] Error sweeping jobs:', message);
   }
 }
 
@@ -101,7 +121,12 @@ async function processQueue() {
   if (processingQueue || queue.length === 0) return;
   processingQueue = true;
 
-  const { fn, resolve, reject } = queue.shift()!;
+  const item = queue.shift();
+  if (!item) {
+    processingQueue = false;
+    return;
+  }
+  const { fn, resolve, reject } = item;
   try {
     const result = await fn();
     resolve(result);
@@ -135,31 +160,18 @@ const upload = multer({
     } else {
       cb(new Error('Invalid file type. Only JPEG and PNG are allowed.'));
     }
-  }
+  },
 });
 
-const sheetSizes: Record<string, { width: number; height: number }> = {
-  a4: { width: 210, height: 297 },
-  a3: { width: 297, height: 420 },
-  a5: { width: 148, height: 210 },
-  letter: { width: 215.9, height: 279.4 },
-  legal: { width: 215.9, height: 355.6 },
-};
-
-const placeholderPng = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAlgAAAGQCAYAAAByNR6YAAAABmJLR0QA/wD/AP+gvaeTAAAGbElEQVR4nO3WwQ3DMAwDQYb//2a3oAslS5KJBRx4k0SWGJ1zFwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4HvX2gMAAADwXSYBAAAwCwAAgFkAAADMAgAA4ABeznC9jvV+Xed4t9Y9AAAAwN8mAQAAcAsAAIBZAAAAzAIAAOCWb0mS5Lquc7zneQAAAMCvTQIAAGAWAAAAswAAAJgFAADAATy9r7UHAACAbzYJAACAWQAAAMwCAABgFgAAALf8fH6/1x4AAAC+2SQAAABmAQAAzAIAAGAWAAAAt3xLkiQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALgGkJfVn4GZy+YAAAAASUVORK5CYII=',
-  'base64',
-);
-
-function asString(value: unknown, fallback: string) {
+function asString(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value : fallback;
 }
 
-function safeFilename(filename: string) {
+function safeFilename(filename: string): string {
   return filename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120) || 'uploaded-image';
 }
 
-function jobFolderFor(jobId: string) {
+function jobFolderFor(jobId: string): string | null {
   if (!uuidPattern.test(jobId)) return null;
   const resolvedJobsRoot = path.resolve(jobsRoot);
   const resolvedJobFolder = path.resolve(resolvedJobsRoot, jobId);
@@ -167,7 +179,7 @@ function jobFolderFor(jobId: string) {
   return resolvedJobFolder;
 }
 
-function jobFile(jobId: string, filename: string) {
+function jobFile(jobId: string, filename: string): string | null {
   const jobFolder = jobFolderFor(jobId);
   if (!jobFolder) return null;
   if (filename !== path.basename(filename)) return null;
@@ -177,7 +189,7 @@ function jobFile(jobId: string, filename: string) {
   return resolved;
 }
 
-async function collectJobFiles(jobId: string) {
+async function collectJobFiles(jobId: string): Promise<Record<string, string>> {
   const jobFolder = jobFolderFor(jobId);
   if (!jobFolder) return {};
 
@@ -196,6 +208,11 @@ async function collectJobFiles(jobId: string) {
 
   return files;
 }
+
+const placeholderPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAlgAAAGQCAYAAAByNR6YAAAABmJLR0QA/wD/AP+gvaeTAAAGbElEQVR4nO3WwQ3DMAwDQYb//2a3oAslS5KJBRx4k0SWGJ1zFwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4HvX2gMAAADwXSYBAAAwCwAAgFkAAADMAgAA4ABeznC9jvV+Xed4t9Y9AAAAwN8mAQAAcAsAAIBZAAAAzAIAAOCWb0mS5Lquc7zneQAAAMCvTQIAAGAWAAAAswAAAJgFAADAATy9r7UHAACAbzYJAACAWQAAAMwCAABgFgAAALf8fH6/1x4AAAC+2SQAAABmAQAAzAIAAGAWAAAAt3xLkiQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAALgGkJfVn4GZy+YAAAAASUVORK5CYII=',
+  'base64',
+);
 
 async function writeMockJob(jobFolder: string) {
   const report = {
@@ -221,10 +238,6 @@ async function writeMockJob(jobFolder: string) {
   return report;
 }
 
-
-
-
-
 async function callPipelineWorker(
   inputPath: string,
   outputDir: string,
@@ -245,7 +258,12 @@ async function callPipelineWorker(
     }),
   });
 
-  const body = await resp.json() as { success: boolean; report?: unknown; message?: string; traceback?: string };
+  const body = (await resp.json()) as {
+    success: boolean;
+    report?: unknown;
+    message?: string;
+    traceback?: string;
+  };
 
   if (!resp.ok || !body.success) {
     const message = (body.message as string) || `Worker returned ${resp.status}`;
@@ -255,38 +273,39 @@ async function callPipelineWorker(
   return body.report;
 }
 
-async function checkWorkerHealth() {
+async function checkWorkerHealth(): Promise<boolean> {
   try {
     const resp = await fetch(`${workerUrl}/health`, { signal: AbortSignal.timeout(3000) });
-    const body = await resp.json() as { ok: boolean };
+    const body = (await resp.json()) as { ok: boolean };
+    if (body.ok) {
+      restartAttempts = 0; // Reset restart counter on successful health ping
+    }
     return body.ok === true;
   } catch {
     return false;
   }
 }
 
-
-
-
-
-app.post('/api/convert', upload.single('image'), async (req, res) => {
+app.post('/api/convert', upload.single('image'), async (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ success: false, message: 'No image provided.' });
   }
 
-  const jobId = randomUUID();
-  const jobFolder = jobFolderFor(jobId);
-  if (!jobFolder) {
-    return res.status(500).json({ success: false, message: 'Could not create job folder.' });
-  }
-  await mkdir(jobFolder, { recursive: true });
-
-  const inputName = `uploaded-${safeFilename(req.file.originalname || 'image')}`;
-  const inputPath = path.join(jobFolder, inputName);
-  const previewPath = path.join(jobFolder, 'result.preview.png');
-  await copyFile(req.file.path, inputPath);
+  const tempFilePath = req.file.path;
 
   try {
+    const jobId = randomUUID();
+    const jobFolder = jobFolderFor(jobId);
+    if (!jobFolder) {
+      return res.status(500).json({ success: false, message: 'Could not create job folder.' });
+    }
+    await mkdir(jobFolder, { recursive: true });
+
+    const inputName = `uploaded-${safeFilename(req.file.originalname || 'image')}`;
+    const inputPath = path.join(jobFolder, inputName);
+    const previewPath = path.join(jobFolder, 'result.preview.png');
+    await copyFile(tempFilePath, inputPath);
+
     let report: unknown;
 
     if (isMockMode) {
@@ -294,13 +313,22 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
     } else {
       const paperSize = asString(req.body.sheetSize, 'a4');
 
-      
       const paramKeys = [
-        'maskThreshold', 'erosionKernel', 'erosionIterations',
-        'minHoleArea', 'minOuterArea', 'circleRatio',
-        'epsilonMin', 'epsilonMax', 'snapAngle', 'snapMinLength',
-        'markerOffsetX', 'markerOffsetY', 'markerClearRadius',
-        'detailsThreshold1', 'detailsThreshold2',
+        'maskThreshold',
+        'erosionKernel',
+        'erosionIterations',
+        'minHoleArea',
+        'minOuterArea',
+        'circleRatio',
+        'epsilonMin',
+        'epsilonMax',
+        'snapAngle',
+        'snapMinLength',
+        'markerOffsetX',
+        'markerOffsetY',
+        'markerClearRadius',
+        'detailsThreshold1',
+        'detailsThreshold2',
       ] as const;
       const processingParams: Record<string, any> = {};
       for (const key of paramKeys) {
@@ -311,13 +339,13 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
         }
       }
       if (req.body.detectDetails !== undefined && req.body.detectDetails !== null && req.body.detectDetails !== '') {
-        processingParams.detectDetails = req.body.detectDetails === 'true' || req.body.detectDetails === '1' || req.body.detectDetails === true;
+        processingParams.detectDetails =
+          req.body.detectDetails === 'true' || req.body.detectDetails === '1' || req.body.detectDetails === true;
       }
       if (req.body.curveStrategy !== undefined && req.body.curveStrategy !== null && req.body.curveStrategy !== '') {
         processingParams.curveStrategy = String(req.body.curveStrategy);
       }
 
-      
       const healthy = await checkWorkerHealth();
       if (!healthy) {
         return res.status(503).json({
@@ -357,11 +385,11 @@ app.post('/api/convert', upload.single('image'), async (req, res) => {
       detail: message,
     });
   } finally {
-    await unlink(req.file.path).catch(() => undefined);
+    await unlink(tempFilePath).catch(() => undefined);
   }
 });
 
-app.post('/api/convert-region', async (req, res) => {
+app.post('/api/convert-region', async (req: Request, res: Response) => {
   const { jobId, bbox, curveStrategy, sheetSize } = req.body;
   if (!jobId || !bbox) {
     return res.status(400).json({ success: false, message: 'jobId and bbox are required.' });
@@ -380,32 +408,37 @@ app.post('/api/convert-region', async (req, res) => {
 
   const inputPath = path.join(jobFolder, uploadedName);
   try {
-    const url = `${workerUrl}/process_region`;
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        inputPath,
-        outputDir: jobFolder,
-        bbox,
-        paperSize: sheetSize || 'a4',
-        curveStrategy: curveStrategy || 'current',
-      }),
+    const result = await enqueue(async () => {
+      const url = `${workerUrl}/process_region`;
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          inputPath,
+          outputDir: jobFolder,
+          bbox,
+          paperSize: sheetSize || 'a4',
+          curveStrategy: curveStrategy || 'current',
+        }),
+      });
+
+      const body = (await resp.json()) as { success: boolean; entities?: unknown; message?: string };
+      if (!resp.ok || !body.success) {
+        throw new Error(body.message || 'Sub-region processing failed.');
+      }
+      return body.entities;
     });
 
-    const body = await resp.json() as { success: boolean; entities?: unknown; message?: string };
-    if (!resp.ok || !body.success) {
-      return res.status(500).json({ success: false, message: body.message || 'Sub-region processing failed.' });
-    }
-    return res.json({ success: true, entities: body.entities });
+    return res.json({ success: true, entities: result });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Sub-region processing error';
     return res.status(500).json({ success: false, message });
   }
 });
 
-app.get('/api/jobs/:jobId/:filename', (req, res) => {
-  const { jobId, filename } = req.params;
+app.get('/api/jobs/:jobId/:filename', (req: Request, res: Response) => {
+  const jobId = req.params.jobId as string;
+  const filename = req.params.filename as string;
   const filePath = jobFile(jobId, filename);
   if (!filePath || !existsSync(filePath)) {
     return res.status(404).json({ success: false, message: 'File not found.' });
@@ -418,7 +451,7 @@ app.get('/api/jobs/:jobId/:filename', (req, res) => {
   }
 });
 
-app.get('/api/health', async (_req, res) => {
+app.get('/api/health', async (_req: Request, res: Response) => {
   const workerOk = await checkWorkerHealth();
   res.json({
     ok: true,
@@ -429,7 +462,7 @@ app.get('/api/health', async (_req, res) => {
 });
 
 // Error handling middleware for Multer and custom validation errors
-app.use((err: any, _req: any, res: any, next: any) => {
+app.use((err: Error, _req: Request, res: Response, next: NextFunction) => {
   if (err instanceof Error) {
     return res.status(400).json({ success: false, message: err.message });
   }
@@ -439,7 +472,7 @@ app.use((err: any, _req: any, res: any, next: any) => {
 const port = Number(process.env.PORT ?? 8787);
 app.listen(port, () => {
   console.log(`DXFify API listening on http://localhost:${port}`);
-  
+
   checkWorkerHealth().then((ok) => {
     if (ok) {
       console.log(`[dxferpy] Python worker at ${workerUrl} is ready`);
