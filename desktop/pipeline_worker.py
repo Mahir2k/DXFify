@@ -41,12 +41,15 @@ class PipelineWorkerThread(QThread):
         """Executes full computer vision pipeline."""
         try:
             self.started_processing.emit()
+            if self.session is None:
+                self.session = create_birefnet_session()
             paper_size = self.params.pop("paperSize", "a4")
 
             report = run_pipeline(
                 self.input_path,
                 self.output_dir,
                 paper_size=paper_size,
+                session=self.session,
                 **self.params,
             )
             self.finished_processing.emit(report)

@@ -1,8 +1,11 @@
 """Primary entry point for the DXFify PyQt6 Native CAD Desktop Application."""
 
+import multiprocessing
 import os
 import sys
-from typing import Any
+
+# Call freeze_support immediately for PyInstaller binary safety
+multiprocessing.freeze_support()
 
 # Ensure project root is in sys.path
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -18,7 +21,6 @@ from PyQt6.QtGui import QColor, QFont, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from desktop.ui.main_window import MainWindow
-from segment_object import create_birefnet_session
 
 
 def set_dark_theme(app: QApplication) -> None:
@@ -55,19 +57,13 @@ def main() -> None:
 
     set_dark_theme(app)
 
-    print("Preloading BiRefNet neural segmentation model...")
-    session: Any = None
-    try:
-        session = create_birefnet_session()
-        print("BiRefNet model loaded successfully.")
-    except Exception as err:
-        print(f"Warning: Could not preload BiRefNet model: {err}")
-
-    window = MainWindow(rembg_session=session)
+    # Launch GUI window instantly (<100ms startup)
+    window = MainWindow(rembg_session=None)
     window.show()
 
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()
