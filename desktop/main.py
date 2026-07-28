@@ -3,13 +3,23 @@
 import multiprocessing
 import os
 import sys
+
+# Enable Chromium GPU hardware acceleration for 60FPS smooth rendering
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+    "--enable-gpu-rasterization "
+    "--enable-zero-copy "
+    "--ignore-gpu-blocklist "
+    "--enable-accelerated-2d-canvas "
+    "--enable-webgl"
+)
+
+# Call freeze_support immediately for PyInstaller binary safety
+multiprocessing.freeze_support()
+
 import threading
 import time
 import urllib.request
 import webview
-
-# Call freeze_support immediately for PyInstaller binary safety
-multiprocessing.freeze_support()
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:

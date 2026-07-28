@@ -20,6 +20,23 @@ os.makedirs(JOBS_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=WEB_DIST_DIR, static_url_path="")
 
+# Cached ONNX BiRefNet Session to avoid reloading model weights on every request
+_REMBG_SESSION = None
+
+
+def get_rembg_session() -> Any:
+    """Pre-loads and caches BiRefNet model session in RAM for instant inference."""
+    global _REMBG_SESSION
+    if _REMBG_SESSION is None:
+        try:
+            from segment_object import create_birefnet_session
+            print("[desktop-server] Pre-loading BiRefNet model session into RAM...")
+            _REMBG_SESSION = create_birefnet_session()
+            print("[desktop-server] BiRefNet model session ready.")
+        except Exception as err:
+            print(f"[desktop-server] Warning: Could not pre-load model: {err}")
+    return _REMBG_SESSION
+
 
 def get_job_files(job_id: str) -> Dict[str, str]:
     """Lists files generated for a conversion job."""
@@ -63,7 +80,7 @@ def get_job_file(job_id: str, filename: str):
 
 @app.route("/api/convert", methods=["POST"])
 def convert():
-    """Executes computer vision pipeline for uploaded image."""
+    """Executes computer vision pipeline for uploaded image using cached model session."""
     try:
         from pipeline_worker import run_pipeline
 
@@ -87,10 +104,13 @@ def convert():
         curve_strategy = request.form.get("curveStrategy", "current")
         detect_details = request.form.get("detectDetails", "false").lower() in ("true", "1")
 
+        session = get_rembg_session()
+
         report = run_pipeline(
             input_path,
             job_folder,
             paper_size=sheet_size,
+            rembg_session=session,
             mask_threshold=mask_threshold,
             erosion_kernel=erosion_kernel,
             erosion_iterations=erosion_iterations,
@@ -113,7 +133,7 @@ def convert():
 
 @app.route("/api/convert-region", methods=["POST"])
 def convert_region():
-    """Reprocesses sub-region box."""
+    """Reprocesses sub-region box using cached model session."""
     try:
         from pipeline_worker import run_pipeline
 
@@ -126,7 +146,6 @@ def convert_region():
         if not os.path.exists(job_folder):
             return jsonify({"success": False, "message": "Job folder not found."}), 404
 
-        # Find original uploaded image in job folder
         uploaded_files = [f for f in os.listdir(job_folder) if f.startswith("uploaded-")]
         if not uploaded_files:
             return jsonify({"success": False, "message": "Original image not found."}), 404
@@ -134,10 +153,13 @@ def convert_region():
         input_path = os.path.join(job_folder, uploaded_files[0])
         bbox = data.get("bbox")
 
+        session = get_rembg_session()
+
         report = run_pipeline(
             input_path,
             job_folder,
             paper_size=data.get("sheetSize", "a4"),
+            rembg_session=session,
             crop_bbox_mm=bbox,
             mask_threshold=int(data.get("maskThreshold", 240)),
             erosion_kernel=int(data.get("erosionKernel", 3)),
