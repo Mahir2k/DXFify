@@ -1,12 +1,22 @@
-"""Self-contained Flask web & API server for the DXFify Standalone Desktop Application."""
+"""Self-contained Flask web & API server for the DXFify Standalone Desktop Application with realtime terminal logging."""
 
 import json
+import logging
 import os
 import sys
+import time
 import uuid
 from typing import Any, Dict
 
 from flask import Flask, jsonify, request, send_from_directory
+
+# Configure unbuffered stdout logging for real-time terminal diagnostics
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s desktop-server] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger("desktop_server")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DXFERPY_DIR = os.path.join(REPO_ROOT, "dxferpy")
@@ -30,11 +40,17 @@ def get_rembg_session() -> Any:
     if _REMBG_SESSION is None:
         try:
             from segment_object import create_birefnet_session
-            print("[desktop-server] Pre-loading BiRefNet model session into RAM...")
+
+            logger.info("Pre-loading BiRefNet ONNX neural segmentation model into RAM...")
+            sys.stdout.flush()
+            start_t = time.time()
             _REMBG_SESSION = create_birefnet_session()
-            print("[desktop-server] BiRefNet model session ready.")
+            elapsed = time.time() - start_t
+            logger.info(f"BiRefNet ONNX neural model loaded successfully in {elapsed:.2f}s.")
+            sys.stdout.flush()
         except Exception as err:
-            print(f"[desktop-server] Warning: Could not pre-load model: {err}")
+            logger.warning(f"Could not pre-load BiRefNet model: {err}")
+            sys.stdout.flush()
     return _REMBG_SESSION
 
 
@@ -81,10 +97,13 @@ def get_job_file(job_id: str, filename: str):
 @app.route("/api/convert", methods=["POST"])
 def convert():
     """Executes computer vision pipeline for uploaded image using cached model session."""
+    start_t = time.time()
     try:
         from pipeline_worker import run_pipeline
 
         if "image" not in request.files:
+            logger.error("POST /api/convert failed: No image provided.")
+            sys.stdout.flush()
             return jsonify({"success": False, "message": "No image uploaded."}), 400
 
         file = request.files["image"]
@@ -104,6 +123,12 @@ def convert():
         curve_strategy = request.form.get("curveStrategy", "current")
         detect_details = request.form.get("detectDetails", "false").lower() in ("true", "1")
 
+        logger.info(
+            f"[API /convert] Image: '{file.filename}' | Job: {job_id} | Paper: {sheet_size.upper()} | "
+            f"Thresh: {mask_threshold} | Kernel: {erosion_kernel} | Strategy: {curve_strategy}"
+        )
+        sys.stdout.flush()
+
         session = get_rembg_session()
 
         report = run_pipeline(
@@ -121,6 +146,11 @@ def convert():
         )
 
         files = get_job_files(job_id)
+        elapsed = time.time() - start_t
+        total_ents = report.get("totalEntities", 0)
+        logger.info(f"[API /convert DONE] Completed in {elapsed:.2f}s | Entities extracted: {total_ents}")
+        sys.stdout.flush()
+
         return jsonify({
             "success": True,
             "jobId": job_id,
@@ -128,12 +158,15 @@ def convert():
             "files": files,
         })
     except Exception as err:
+        logger.error(f"[API /convert ERROR] {err}", exc_info=True)
+        sys.stdout.flush()
         return jsonify({"success": False, "message": str(err)}), 500
 
 
 @app.route("/api/convert-region", methods=["POST"])
 def convert_region():
     """Reprocesses sub-region box using cached model session."""
+    start_t = time.time()
     try:
         from pipeline_worker import run_pipeline
 
@@ -153,6 +186,9 @@ def convert_region():
         input_path = os.path.join(job_folder, uploaded_files[0])
         bbox = data.get("bbox")
 
+        logger.info(f"[API /convert-region] Job: {job_id} | BBox: {bbox}")
+        sys.stdout.flush()
+
         session = get_rembg_session()
 
         report = run_pipeline(
@@ -171,6 +207,10 @@ def convert_region():
         )
 
         files = get_job_files(job_id)
+        elapsed = time.time() - start_t
+        logger.info(f"[API /convert-region DONE] Completed in {elapsed:.2f}s")
+        sys.stdout.flush()
+
         return jsonify({
             "success": True,
             "jobId": job_id,
@@ -178,9 +218,13 @@ def convert_region():
             "files": files,
         })
     except Exception as err:
+        logger.error(f"[API /convert-region ERROR] {err}", exc_info=True)
+        sys.stdout.flush()
         return jsonify({"success": False, "message": str(err)}), 500
 
 
 def run_server(port: int = 3001) -> None:
     """Starts local server."""
+    logger.info(f"[desktop-server] Serving DXFify Desktop API & Static UI on http://127.0.0.1:{port}")
+    sys.stdout.flush()
     app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)

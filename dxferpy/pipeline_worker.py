@@ -628,6 +628,7 @@ def run_pipeline(
     output_dir: str,
     paper_size: str = "a4",
     *,
+    rembg_session: Optional[Any] = None,
     mask_threshold: int = 240,
     erosion_kernel: int = 3,
     erosion_iterations: int = 1,
@@ -645,6 +646,7 @@ def run_pipeline(
     details_threshold1: int = 50,
     details_threshold2: int = 150,
     curve_strategy: str = "current",
+    crop_bbox_mm: Optional[list] = None,
 ) -> dict:
     """Executes end-to-end segmentation, homography warping, and vectorization workflow.
 
@@ -681,6 +683,11 @@ def run_pipeline(
     result_mask = os.path.join(output_dir, "result.mask.png")
     result_holes = os.path.join(output_dir, "result.holes.png")
     result_json = os.path.join(output_dir, "result.json")
+
+    if rembg_session is None:
+        from segment_object import create_birefnet_session
+        logger.info("Initializing BiRefNet neural segmentation session...")
+        rembg_session = create_birefnet_session()
 
     logger.info(f"Segmenting {input_path}...")
     img, mask, used_aruco = segment_single_image(
