@@ -1,4 +1,4 @@
-# 10 - Standalone Single Executable Desktop Application
+# 04 - Standalone Desktop Application
 
 ## 1. Overview & Motivation
 

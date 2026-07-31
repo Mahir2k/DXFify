@@ -116,9 +116,10 @@ This report is part of a 10-part technical documentation suite located in `/repo
 - **`01_computer_vision_pipeline.md`**: ArUco detection, homography perspective correction, BiRefNet segmentation, and edge refinement algorithms.
 - **`02_vectorization_engine.md`**: Polygon simplification, orthogonal angle snapping, curve fitting strategies, and DXF assembly.
 - **`03_web_application.md`**: Web editor architecture, React state flow, Three.js CAD rendering, and API bridge design.
-- **`04_coordinate_systems.md`**: Mathematical derivations of coordinate spaces (DXF model, SVG pixels, camera frame) and matrix transformation proofs.
-- **`05_cad_tools.md`**: Technical specification of all 25 CAD tools, brush deformation math, and export generators.
-- **`06_calibration_system.md`**: Metric calibration targets, printer margin factor, scale calculation, and error metrics.
-- **`07_development_timeline.md`**: Chronological evolution from initial C++ prototype through Python vector engine to full Web CAD editor.
-- **`08_bugs_and_fixes.md`**: Deep post-mortem of major engineering challenges, root causes, and mathematical fixes.
-- **`09_internship_report_strategy.md`**: Strategy for assembling these technical reports into the final university internship thesis.
+- **`04_desktop_application.md`**: Standalone single executable desktop app, native `pywebview` integration, RAM model caching, and GPU acceleration.
+- **`05_coordinate_systems.md`**: Mathematical derivations of coordinate spaces (DXF model, SVG pixels, camera frame) and matrix transformation proofs.
+- **`06_cad_tools.md`**: Technical specification of all 25 CAD tools, brush deformation math, and export generators.
+- **`07_calibration_system.md`**: Metric calibration targets, printer margin factor, scale calculation, and error metrics.
+- **`08_development_timeline.md`**: Chronological evolution from initial C++ prototype through Python vector engine to full Web CAD editor.
+- **`09_bugs_and_fixes.md`**: Deep post-mortem of major engineering challenges, root causes, and mathematical fixes.
+- **`10_internship_report_strategy.md`**: Strategy for assembling these technical reports into the final university internship thesis.

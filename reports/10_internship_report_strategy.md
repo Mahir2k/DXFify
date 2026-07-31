@@ -1,8 +1,8 @@
-# 09 - Internship Report Strategy & Mapping Guide
+# 10 - Internship Report Strategy & Mapping Guide
 
 ## 1. Executive Strategy & Objectives
 
-This document provides a strategic blueprint for assembling the modular technical reports (`00_project_overview.md` through `08_bugs_and_fixes.md`) into a polished, formal university internship report (Master's / Engineering Thesis standard).
+This document provides a strategic blueprint for assembling the modular technical reports (`00_project_overview.md` through `09_bugs_and_fixes.md`) into a polished, formal university internship report (Master's / Engineering Thesis standard).
 
 ### Dual-Audience Targeting Strategy
 The final report must satisfy two distinct evaluation audiences:
@@ -39,11 +39,11 @@ When the university provides its official thesis template, map the modular `/rep
 | :--- | :--- | :--- |
 | **Chapter 1: Introduction & Context** | Company background (Orange), project scope, problem statement, reverse engineering challenges. | `00_project_overview.md` |
 | **Chapter 2: State of the Art & Theory** | Background on computer vision, homography, deep learning segmentation (BiRefNet), RDP polyline simplification. | `01_computer_vision_pipeline.md`<br>`02_vectorization_engine.md` |
-| **Chapter 3: System Design & Architecture** | Full multi-module pipeline, hardware capture (`pic`), Python core (`dxferpy`), Web client (`dxfer/web`), Standalone Desktop Executable (`desktop/`). | `00_project_overview.md`<br>`03_web_application.md`<br>`10_standalone_desktop_application.md` |
-| **Chapter 4: Computer Vision & Vectorization** | Detailed mathematical formulation of ArUco calibration, homography DLT solver, line snapping, curve strategies. | `01_computer_vision_pipeline.md`<br>`02_vectorization_engine.md`<br>`06_calibration_system.md` |
-| **Chapter 5: Web CAD Editor & Math** | Interactive editor UI, Three.js WebGL rendering, 2D rigid rotation composition proof, 25 CAD tools specification. | `03_web_application.md`<br>`04_coordinate_systems.md`<br>`05_cad_tools.md` |
-| **Chapter 6: Validation, Engineering & Bugs** | Metric precision testing, printer margin discovery, post-mortems of 13 major engineering bugs and mathematical fixes. | `06_calibration_system.md`<br>`07_development_timeline.md`<br>`08_bugs_and_fixes.md`<br>`10_standalone_desktop_application.md` |
-| **Chapter 7: Conclusion & Future Work** | Summary of contributions, hardware integration roadmap, future AI curve fitting improvements. | `00_project_overview.md`<br>`09_internship_report_strategy.md` |
+| **Chapter 3: System Design & Architecture** | Full multi-module pipeline, hardware capture (`pic`), Python core (`dxferpy`), Web client (`dxfer/web`), Standalone Desktop Executable (`desktop/`). | `00_project_overview.md`<br>`03_web_application.md`<br>`04_desktop_application.md` |
+| **Chapter 4: Computer Vision & Vectorization** | Detailed mathematical formulation of ArUco calibration, homography DLT solver, line snapping, curve strategies. | `01_computer_vision_pipeline.md`<br>`02_vectorization_engine.md`<br>`07_calibration_system.md` |
+| **Chapter 5: Web CAD Editor & Math** | Interactive editor UI, Three.js WebGL rendering, 2D rigid rotation composition proof, 25 CAD tools specification. | `03_web_application.md`<br>`05_coordinate_systems.md`<br>`06_cad_tools.md` |
+| **Chapter 6: Validation, Engineering & Bugs** | Metric precision testing, printer margin discovery, post-mortems of 13 major engineering bugs and mathematical fixes. | `04_desktop_application.md`<br>`07_calibration_system.md`<br>`08_development_timeline.md`<br>`09_bugs_and_fixes.md` |
+| **Chapter 7: Conclusion & Future Work** | Summary of contributions, hardware integration roadmap, future AI curve fitting improvements. | `00_project_overview.md`<br>`10_internship_report_strategy.md` |
 
 ---
 
