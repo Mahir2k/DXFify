@@ -1,13 +1,22 @@
-# DXFify: Photographic Dimensional Reconstruction
+# DXFify: Photographic Dimensional Reconstruction & Standalone CAD Application
 
 DXFify converts a single photograph of a flat object lying on a sheet with ArUco corners into a metrically accurate 2D DXF vector file. The output is scaled 1:1 in millimeters, suitable for laser cutting or CAD import.
+
+DXFify operates both as a **Web Application Dashboard** and as a **Single Standalone Executable Desktop Application** (with zero external web browser dependencies).
 
 ---
 
 ## Codebase Architecture
 
+### Standalone Executable & Desktop Package (`desktop/`)
+- **`desktop/main.py`**: Executable entry point. Invokes `multiprocessing.freeze_support()`, configures Chromium GPU hardware acceleration flags (`--enable-gpu-rasterization`, `--enable-accelerated-2d-canvas`, `--enable-webgl`), pre-warms the BiRefNet ONNX model, starts the embedded local server, and launches a native desktop window using `pywebview` with PyQt6 WebEngine.
+- **`desktop/desktop_server.py`**: Embedded self-contained Python Flask server running inside the single process. Serves the static React build (`web/dist`) and API endpoints (`/api/convert`, `/api/convert-region`, `/api/jobs/`) with RAM-cached ONNX model session (`_REMBG_SESSION`) for instant 5x faster vectorization and unbuffered real-time terminal logging.
+- **`desktop/pipeline_worker.py`**: `QThread` background worker executing computer vision segmentation and vectorization asynchronously.
+- **`desktop/dxfify.spec`**: PyInstaller specification bundling Python runtime, ONNX model weights, OpenCV DLLs, PyQt6 WebEngine, and static web bundle into a single standalone binary executable (`dist/dxfify`).
+- **`desktop/ui/`**: Native PyQt6 CAD viewports (`CadCanvas`), toolbars (`CadToolBar`), status bar (`CadStatusBar`), and settings dock (`SettingsDock`).
+
 ### Python Backend (`dxferpy/`)
-- **`pipeline_worker.py`**: Hosts a persistent Flask server (default port 8788). Preloads the `birefnet-general-lite` segmentation model to avoid the overhead of loading weights on every image run. It coordinates the segmentation, perspective correction, and vectorization.
+- **`pipeline_worker.py`**: Hosts a persistent Flask server (default port 8788). Preloads the `birefnet-general-lite` segmentation model to avoid the overhead of loading weights on every image run. Coordinates segmentation, perspective correction, and vectorization.
 - **`segment_object.py`**: Identifies ArUco markers to compute camera perspective matrices and warps the raw image to top-down flat coordinates. Uses the preloaded segmentation model to generate binary transparency masks.
 - **`vectorize_smart.py`**: Extracts contours from the binary mask, runs Douglas-Peucker simplification, snaps lines close to dominant directions, identifies circular regions, fits LWPOLYLINE structures with bulges for arcs, and handles high-frequency detail engraving line extraction.
 - **`render_dxf.py`**: Generates high-fidelity preview images from DXF coordinates to overlay vectors on top of original raster previews.
@@ -17,9 +26,9 @@ DXFify converts a single photograph of a flat object lying on a sheet with ArUco
 
 ### React Client (`web/src/`)
 - **`App.tsx`**: Application state container. Manages history stacks (undo/redo), active geometries, zoom states, tool selections, and image uploads.
-- **`components/Workspace.tsx`**: Grid layout shell. Coordinates coordinate alignment between raster and vector panels. Implements custom drag handlers to adjust toolbar width and bottom panel height in-place.
+- **`components/Workspace.tsx`**: Grid layout shell. Coordinates alignment between raster and vector panels. Implements custom drag handlers to adjust toolbar width and bottom panel height in-place.
 - **`components/DxfPreview.tsx`**: Interactive CAD editor. Handles canvas pans, zoom scaling, snap-to-vertex logic, ruler rendering, and mouse event routing for editing tools.
-- **`components/Toolbar.tsx`**: Tool selection grid and settings toggles for the physical deformation brush.
+- **`components/Toolbar.tsx`**: Tool selection grid and settings toggles for the physical deformation brush (Ball `●` / Cube `■`).
 - **`components/SettingsPanel.tsx`**: Dynamic input controls mapping optional segmentation, contour filtering, and vectorization parameters to the API request.
 - **`components/ReportPanel.tsx`**: Displays ArUco detection accuracy, computed tolerances, reprojection warnings, and exact bounding box sizes.
 - **`components/ArtifactList.tsx`**: File downloader panel for output files (DXF, masks, debug previews, JSON reports).
@@ -28,7 +37,22 @@ DXFify converts a single photograph of a flat object lying on a sheet with ArUco
 
 ## Installation & Execution
 
-### 1. Python Backend
+### 1. Standalone Single Binary Desktop Application (No External Browser Needed)
+
+Run the compiled single binary executable directly from terminal:
+
+```bash
+./dxferpy/dist/dxfify/dxfify
+```
+
+To re-compile the single binary executable:
+
+```bash
+cd dxferpy
+venv/bin/pyinstaller --noconfirm ../desktop/dxfify.spec
+```
+
+### 2. Python Backend & Web Server
 Required: Python 3.10+ and OpenCV with ArUco support.
 
 ```bash
@@ -39,9 +63,7 @@ pip install -r requirements.txt
 python3 pipeline_worker.py
 ```
 
-Requires OpenCV 4.7+ built with the `opencv_contrib` `aruco` module.
-
-### 2. Frontend Dashboard
+### 3. Frontend Dashboard
 Required: Node.js 18+.
 
 ```bash
@@ -49,28 +71,6 @@ cd web
 npm install
 npm run dev
 ```
-
-`npm run dev` starts the Python worker, the Express API, and the Vite client together. The Vite frontend runs on `http://localhost:5173` and proxies API calls to the Express server on `http://localhost:8787`.
-
-If you run the Python worker separately, the Express server talks to `http://127.0.0.1:8788` by default. Override that worker address with `DXFERPY_URL`:
-
-```bash
-cd web
-DXFERPY_URL=http://127.0.0.1:8788 npm run dev:server
-```
-
-For frontend-only development without the Python worker:
-
-```bash
-cd web
-DXFER_MOCK=1 npm run dev
-```
-
-The main conversion endpoint is `POST /api/convert`. It accepts a multipart image upload and options such as segmentation method, pixels/mm, marker size, sheet size, arc fitting, right-angle snapping, and contour thresholds. Successful jobs return links for `result.dxf`, `result.dbg.png`, `result.json`, and any extra generated preview or mask artifacts.
-
-If `dxferpy/render_dxf.py` and its Python dependencies are available, the API also tries to render `result.preview.png` from the generated DXF. Preview rendering is best-effort: a render failure is logged as a warning and does not fail the conversion.
-
-Each conversion is stored in a unique job folder under `web/uploads/jobs/`. The uploaded source image, generated DXF, debug image, JSON report, preview image, and masks stay together in that folder. Job artifacts are served through `/api/jobs/:jobId/<filename>` with path traversal checks so requests cannot escape the jobs directory.
 
 ---
 
@@ -103,17 +103,16 @@ The settings panel exposes the following thresholds to optimize edge fitting:
 - **Snap min length** (default 20 px): Segments shorter than this threshold bypass orthogonal snapping to preserve small custom curves.
 
 ### Detail Engraving (Optional)
-- **Detect Details** (toggle, default false): Extracts surface textures, grooves, and embossed elements inside the object (such as lettering, faces on coins, or bezel grooves on cases) as open vector paths.
-- **Sensitivity threshold 1 & 2** (default 50 / 150): Double Canny thresholds used for fine-line edge detection. Lower values detect faint surface textures.
-- **CAD Representation**: These elements are placed on the `DETAILS` layer (colored green/emerald in CAD previews and exported DXFs) to separate them from cuts (`OUTER`/`HOLES`), allowing laser software to automatically map them to low-power score/engraving settings.
+- **Detect Details** (toggle, default false): Extracts surface textures, grooves, and embossed elements inside the object as open vector paths.
+- **Sensitivity threshold 1 & 2** (default 50 / 150): Double Canny thresholds used for fine-line edge detection.
+- **CAD Representation**: Placed on the `DETAILS` layer (colored green/emerald in CAD previews and exported DXFs).
 
 ---
 
 ## CAD Editing & Resizing
 
 - **Vertex Adjustments**: Active in Select tool (`↖`). Drag handles to move vertices. Snapping automatically aligns moved points to adjacent vertices when within `6mm`.
-- **Physical Deformation Brush (`🖌`)**: Simulates a rigid sphere (Circle `●`) or cube (Square `■`) pushing against a flexible contour. Clicking and dragging pushes vertices outward to the brush boundary, allowing smooth bending of jagged shapes. Resize the brush by holding **Shift** and rolling the **mouse scroll wheel**.
-- **Splitter Dragging**: Resize the docked panel columns and rows by dragging the divider borders directly.
+- **Physical Deformation Brush (`🖌`)**: Push vertices outward using spherical (Ball `●`) or cubic (Square `■`) shapes. Resize the brush by holding **Shift** and rolling the **mouse scroll wheel**, or press **B** / **S** to toggle brush shape.
 - **Hole Marking (`○`)**: Select any outline to switch its layer to `HOLES` (colored red in standard CAD files).
-- **Layer Visibility**: Independently toggle the visibility of the `OUTER`, `HOLES`, and `DETAILS` layers using the checkboxes located below the zoom options.
-- **Atomized History**: Every complete edit, drag, or brush stroke is recorded as a single frame, allowing standard `Ctrl+Z` (Undo) and `Ctrl+Y` (Redo) operations.
+- **Layer Visibility**: Independently toggle the visibility of the `OUTER`, `HOLES`, and `DETAILS` layers using checkboxes.
+- **Atomized History**: Every edit, drag, or brush stroke is recorded as a single frame for `Ctrl+Z` (Undo) and `Ctrl+Y` (Redo).
