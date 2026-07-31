@@ -4,6 +4,8 @@ DXFify converts a single photograph of a flat object lying on a sheet with ArUco
 
 DXFify operates both as a **Web Application Dashboard** and as a **Single Standalone Executable Desktop Application** (with zero external web browser dependencies).
 
+> For future maintainers taking over the codebase, see the [Technical Handover & Developer Guide](TECHNICAL_HANDOVER.md).
+
 ---
 
 ## Codebase Architecture
