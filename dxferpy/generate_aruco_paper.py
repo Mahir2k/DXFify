@@ -42,7 +42,8 @@ def generate_aruco_svg(
     marker_size_mm: float = 30.0,
     margin_x_mm: float = 32.2,
     margin_y_mm: float = 34.2,
-    show_ruler: bool = True
+    show_ruler: bool = True,
+    show_header_text: bool = False,
 ) -> str:
     """Generates a clean 1:1 scale SVG markup string for the ArUco calibration paper."""
     if paper_type in PAPER_PRESETS:
@@ -71,7 +72,7 @@ def generate_aruco_svg(
     }
 
     svg = []
-    svg.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="{pw}mm" height="{ph}mm" viewBox="0 0 {pw} {ph}">')
+    svg.append(f'<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 {pw} {ph}" style="max-width: 100%; max-height: 100%; display: block; margin: auto;">')
     svg.append('  <style>')
     svg.append('    .text-title { font-family: system-ui, sans-serif; font-size: 4px; font-weight: bold; fill: #111; }')
     svg.append('    .text-sub { font-family: system-ui, sans-serif; font-size: 2.8px; fill: #555; }')
@@ -134,16 +135,17 @@ def generate_aruco_svg(
         # Marker ID label
         svg.append(f'  <text x="{cx}" y="{cy + half_m + 3}" text-anchor="middle" class="text-sub">ID: {marker_id}</text>')
 
-    # Header and Scale Instructions
-    header_y = offset_y - half_m - 4.0
-    if header_y < 12.0:
-        header_y = 12.0
+    # Header and Scale Instructions (Optional)
+    if show_header_text:
+        header_y = offset_y - half_m - 4.0
+        if header_y < 12.0:
+            header_y = 12.0
 
-    svg.append(f'  <text x="{pw / 2}" y="{header_y}" text-anchor="middle" class="text-title">DXFify Calibration Target — {paper_type} ({pw:.1f} × {ph:.1f} mm)</text>')
-    svg.append(f'  <text x="{pw / 2}" y="{header_y + 4.5}" text-anchor="middle" class="text-alert">CRITICAL: PRINT AT 100% SCALE (ACTUAL SIZE). DO NOT SCALE TO FIT.</text>')
+        svg.append(f'  <text x="{pw / 2}" y="{header_y}" text-anchor="middle" class="text-title">DXFify Calibration Target — {paper_type} ({pw:.1f} × {ph:.1f} mm)</text>')
+        svg.append(f'  <text x="{pw / 2}" y="{header_y + 4.5}" text-anchor="middle" class="text-alert">CRITICAL: PRINT AT 100% SCALE (ACTUAL SIZE). DO NOT SCALE TO FIT.</text>')
 
-    info_str = f'Marker Size: {ms:.1f} mm | Offsets: X={offset_x:.1f} mm, Y={offset_y:.1f} mm | Dictionary: DICT_4X4_50'
-    svg.append(f'  <text x="{pw / 2}" y="{header_y + 8.5}" text-anchor="middle" class="text-sub">{info_str}</text>')
+        info_str = f'Marker Size: {ms:.1f} mm | Offsets: X={offset_x:.1f} mm, Y={offset_y:.1f} mm | Dictionary: DICT_4X4_50'
+        svg.append(f'  <text x="{pw / 2}" y="{header_y + 8.5}" text-anchor="middle" class="text-sub">{info_str}</text>')
 
     svg.append('</svg>')
     return '\n'.join(svg)
@@ -157,7 +159,8 @@ def generate_aruco_paper_pdf(
     marker_size_mm: float = 30.0,
     margin_x_mm: float = 32.2,
     margin_y_mm: float = 34.2,
-    show_ruler: bool = True
+    show_ruler: bool = True,
+    show_header_text: bool = False,
 ) -> bytes:
     """Generates a high-precision vector PDF byte stream for the ArUco calibration paper."""
     if paper_type in PAPER_PRESETS:
@@ -217,11 +220,12 @@ def generate_aruco_paper_pdf(
 
         ax.text(cx, cy + half_m + 3.0, f'ID: {marker_id}', fontsize=7, ha='center', va='top', color='#333333')
 
-    # Header Text
-    header_y = max(12.0, offset_y - half_m - 4.0)
-    ax.text(pw / 2.0, header_y, f'DXFify Calibration Target — {paper_type} ({pw:.1f} × {ph:.1f} mm)', fontsize=10, fontweight='bold', ha='center', color='#111111')
-    ax.text(pw / 2.0, header_y + 4.5, 'CRITICAL: PRINT AT 100% SCALE (ACTUAL SIZE). DO NOT SCALE TO FIT.', fontsize=8, fontweight='bold', ha='center', color='#d32f2f')
-    ax.text(pw / 2.0, header_y + 8.5, f'Marker Size: {ms:.1f} mm | Offsets: X={offset_x:.1f} mm, Y={offset_y:.1f} mm | Dictionary: DICT_4X4_50', fontsize=7, ha='center', color='#555555')
+    # Header Text (Optional)
+    if show_header_text:
+        header_y = max(12.0, offset_y - half_m - 4.0)
+        ax.text(pw / 2.0, header_y, f'DXFify Calibration Target — {paper_type} ({pw:.1f} × {ph:.1f} mm)', fontsize=10, fontweight='bold', ha='center', color='#111111')
+        ax.text(pw / 2.0, header_y + 4.5, 'CRITICAL: PRINT AT 100% SCALE (ACTUAL SIZE). DO NOT SCALE TO FIT.', fontsize=8, fontweight='bold', ha='center', color='#d32f2f')
+        ax.text(pw / 2.0, header_y + 8.5, f'Marker Size: {ms:.1f} mm | Offsets: X={offset_x:.1f} mm, Y={offset_y:.1f} mm | Dictionary: DICT_4X4_50', fontsize=7, ha='center', color='#555555')
 
     # Ruler ticks
     if show_ruler:

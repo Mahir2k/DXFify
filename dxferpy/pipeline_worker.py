@@ -647,6 +647,8 @@ def run_pipeline(
     details_threshold2: int = 150,
     curve_strategy: str = "current",
     crop_bbox_mm: Optional[list] = None,
+    custom_w_mm: Optional[float] = None,
+    custom_h_mm: Optional[float] = None,
 ) -> dict:
     """Executes end-to-end segmentation, homography warping, and vectorization workflow.
 
@@ -675,7 +677,10 @@ def run_pipeline(
     Returns:
         JSON-serializable report dictionary containing all CAD vector entities and metrics.
     """
-    paper_w, paper_h = PAPER_SIZES.get(paper_size.lower(), PAPER_SIZES["a4"])
+    if paper_size.lower() == "custom" and custom_w_mm is not None and custom_h_mm is not None:
+        paper_w, paper_h = float(custom_w_mm), float(custom_h_mm)
+    else:
+        paper_w, paper_h = PAPER_SIZES.get(paper_size.lower(), PAPER_SIZES["a4"])
 
     result_dxf = os.path.join(output_dir, "result.dxf")
     result_dbg = os.path.join(output_dir, "result.dbg.png")
@@ -955,8 +960,8 @@ def generate_aruco_paper_route():
         orientation = data.get("orientation", "portrait")
         marker_size_mm = float(data.get("marker_size_mm", 30.0))
         margin_x_mm = float(data.get("margin_x_mm", 32.2))
-        margin_y_mm = float(data.get("margin_y_mm", 34.2))
         show_ruler = str(data.get("show_ruler", "true")).lower() in ["true", "1", "yes"]
+        show_header_text = str(data.get("show_header_text", "false")).lower() in ["true", "1", "yes"]
         fmt = data.get("format", "pdf").lower()
 
         if fmt == "svg":
@@ -969,6 +974,7 @@ def generate_aruco_paper_route():
                 margin_x_mm=margin_x_mm,
                 margin_y_mm=margin_y_mm,
                 show_ruler=show_ruler,
+                show_header_text=show_header_text,
             )
             return Response(
                 svg_str,
@@ -985,6 +991,7 @@ def generate_aruco_paper_route():
                 margin_x_mm=margin_x_mm,
                 margin_y_mm=margin_y_mm,
                 show_ruler=show_ruler,
+                show_header_text=show_header_text,
             )
             return Response(
                 pdf_bytes,

@@ -3,6 +3,8 @@ import { ConversionApiError, runConversion } from './api/convertClient';
 import { TopBar } from './components/TopBar';
 import { Workspace } from './components/Workspace';
 import { ArucoPaperGeneratorModal } from './components/ArucoPaperGeneratorModal';
+import { ToastNotification, type ToastState } from './components/ToastNotification';
+import { saveFileToDisk, saveUrlToDisk } from './utils/fileSaver';
 import { computeBoundingBox } from './utils/geometryUtils';
 import type {
   ConversionErrorDetails,
@@ -256,6 +258,14 @@ export default function App() {
   const [subRegionStrategy, setSubRegionStrategy] = useState<'current' | 'pratt' | 'spline' | 'gaussian' | 'ransac'>('ransac');
   const [isProcessingSubRegion, setIsProcessingSubRegion] = useState(false);
   const [isArucoModalOpen, setIsArucoModalOpen] = useState(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast((current) => (current?.message === message ? null : current));
+    }, 4000);
+  };
 
   
   const [gridEnabled, setGridEnabled] = useState(true);
@@ -440,45 +450,56 @@ export default function App() {
     }
   };
 
-  const handleDownloadDxf = () => {
-    if (entities.length === 0) return;
-    const dxfText = generateDxfString(entities);
-    const blob = new Blob([dxfText], { type: 'application/dxf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'result.dxf';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleDownloadDxf = async () => {
+    const filename = uploadedFile ? `${uploadedFile.name.replace(/\.[^/.]+$/, '')}.dxf` : 'result.dxf';
+    if (conversionResult?.files?.dxf) {
+      const res = await saveUrlToDisk(conversionResult.files.dxf, filename);
+      if (res.success && res.message) {
+        showToast(res.message, 'success');
+        return;
+      }
+    }
+    if (entities.length > 0) {
+      const dxfText = generateDxfString(entities);
+      const res = await saveFileToDisk(filename, dxfText, false);
+      if (res.success && res.message) {
+        showToast(res.message, 'success');
+      } else {
+        showToast(res.message || 'Failed to save DXF', 'error');
+      }
+    } else {
+      showToast('No conversion result or geometry available to export.', 'error');
+    }
   };
 
-  const handleDownloadSvg = () => {
-    if (entities.length === 0) return;
-    const svgText = generateSvgString(entities);
-    const blob = new Blob([svgText], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'result.svg';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleDownloadSvg = async () => {
+    const filename = uploadedFile ? `${uploadedFile.name.replace(/\.[^/.]+$/, '')}.svg` : 'result.svg';
+    if (entities.length > 0) {
+      const svgText = generateSvgString(entities);
+      const res = await saveFileToDisk(filename, svgText, false);
+      if (res.success && res.message) {
+        showToast(res.message, 'success');
+      } else {
+        showToast(res.message || 'Failed to save SVG', 'error');
+      }
+    } else {
+      showToast('No geometry entities available to export.', 'error');
+    }
   };
 
-  const handleDownloadPdf = () => {
-    if (entities.length === 0) return;
-    const blob = generatePdfBlob(entities);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'result.pdf';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const handleDownloadPdf = async () => {
+    const filename = uploadedFile ? `${uploadedFile.name.replace(/\.[^/.]+$/, '')}.pdf` : 'result.pdf';
+    if (entities.length > 0) {
+      const pdfBlob = generatePdfBlob(entities);
+      const res = await saveFileToDisk(filename, pdfBlob, true);
+      if (res.success && res.message) {
+        showToast(res.message, 'success');
+      } else {
+        showToast(res.message || 'Failed to save PDF', 'error');
+      }
+    } else {
+      showToast('No geometry entities available to export.', 'error');
+    }
   };
 
   return (
@@ -486,7 +507,7 @@ export default function App() {
       <TopBar
         status={status}
         canRun={Boolean(uploadedFile) && !isConverting}
-        canDownload={entities.length > 0}
+        canDownload={Boolean(conversionResult || entities.length > 0)}
         isConverting={isConverting}
         dxfUrl={conversionResult?.files.dxf ?? null}
         onUpload={handleUpload}
@@ -750,7 +771,10 @@ export default function App() {
       <ArucoPaperGeneratorModal
         isOpen={isArucoModalOpen}
         onClose={() => setIsArucoModalOpen(false)}
+        onShowToast={showToast}
       />
+
+      <ToastNotification toast={toast} onClose={() => setToast(null)} />
     </main>
   );
 }

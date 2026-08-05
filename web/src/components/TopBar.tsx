@@ -242,6 +242,7 @@ export function TopBar(props: TopBarProps) {
       { label: 'Sheet: A5', action: () => onSettingsChange({ ...settings, sheetSize: 'a5' }), checked: settings.sheetSize === 'a5' },
       { label: 'Sheet: Letter', action: () => onSettingsChange({ ...settings, sheetSize: 'letter' }), checked: settings.sheetSize === 'letter' },
       { label: 'Sheet: Legal', action: () => onSettingsChange({ ...settings, sheetSize: 'legal' }), checked: settings.sheetSize === 'legal' },
+      { label: 'Sheet: Custom', action: () => onSettingsChange({ ...settings, sheetSize: 'custom' }), checked: settings.sheetSize === 'custom' },
     ],
     Windows: [
       { label: 'Toolbox', action: onToggleToolbox, checked: showToolbox },

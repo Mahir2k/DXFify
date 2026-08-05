@@ -1,21 +1,26 @@
-"""Primary entry point for the DXFify Standalone Desktop Application."""
+"""Primary entry point for the DXFify Standalone Desktop Application.
+
+Cross-platform: Linux, macOS, Windows.
+"""
 
 import multiprocessing
 import os
+import platform
 import sys
 
 # Force unbuffered stdout & stderr for immediate terminal log output
 sys.stdout.reconfigure(line_buffering=True) if hasattr(sys.stdout, 'reconfigure') else None
 sys.stderr.reconfigure(line_buffering=True) if hasattr(sys.stderr, 'reconfigure') else None
 
-# Enable Chromium GPU hardware acceleration for 60FPS smooth rendering
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
-    "--enable-gpu-rasterization "
-    "--enable-zero-copy "
-    "--ignore-gpu-blocklist "
-    "--enable-accelerated-2d-canvas "
-    "--enable-webgl"
-)
+# Enable Chromium GPU hardware acceleration for 60FPS smooth rendering (Linux Qt backend only)
+if platform.system() == "Linux":
+    os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+        "--enable-gpu-rasterization "
+        "--enable-zero-copy "
+        "--ignore-gpu-blocklist "
+        "--enable-accelerated-2d-canvas "
+        "--enable-webgl"
+    )
 
 # Call freeze_support immediately for PyInstaller binary safety
 multiprocessing.freeze_support()
@@ -87,7 +92,20 @@ def main() -> None:
 
     logger.info("Opening desktop application window...")
     sys.stdout.flush()
-    webview.start(gui="qt", private_mode=False)
+
+    # Auto-select native GUI backend per platform:
+    #   Linux  → Qt (PyQt6 WebEngine)
+    #   Windows → EdgeChromium (native, no extra deps)
+    #   macOS  → Cocoa WebKit (native)
+    current_os = platform.system()
+    if current_os == "Linux":
+        gui_backend = "qt"
+    elif current_os == "Darwin":
+        gui_backend = "cocoa"
+    else:
+        gui_backend = None  # Windows: pywebview auto-selects EdgeChromium
+
+    webview.start(gui=gui_backend, private_mode=False)
 
 
 if __name__ == "__main__":

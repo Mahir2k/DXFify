@@ -1639,6 +1639,9 @@ button.ruler-corner:hover {
   border-radius: 2px;
   outline: none;
   font-family: inherit;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .gimp-settings-grid select:focus,
@@ -1685,6 +1688,35 @@ button.ruler-corner:hover {
 
 .gimp-btn-primary:hover {
   background: #468656;
+}
+
+.gimp-aruco-preview-wrapper svg {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto !important;
+  height: auto !important;
+  object-fit: contain;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  background: #ffffff;
+}
+
+.gimp-aruco-modal-box {
+  width: 920px !important;
+  max-width: 95vw !important;
+  min-width: 850px !important;
+  max-height: 90vh !important;
+}
+
+.gimp-aruco-modal-body {
+  padding: 16px !important;
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 20px !important;
+  height: 480px !important;
+  width: 100% !important;
+  min-height: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
 }
 
 

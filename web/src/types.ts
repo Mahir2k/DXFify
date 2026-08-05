@@ -40,7 +40,9 @@ export interface SubRegionReprocessRequest {
 }
 
 export interface ConversionSettings {
-  sheetSize: 'a4' | 'a3' | 'a2' | 'a1' | 'a5' | 'letter' | 'legal';
+  sheetSize: 'a4' | 'a3' | 'a2' | 'a1' | 'a5' | 'letter' | 'legal' | 'custom';
+  customWidthMm?: number;
+  customHeightMm?: number;
 
   maskThreshold?: number;
   erosionKernel?: number;

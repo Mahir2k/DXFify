@@ -33,6 +33,63 @@ if DXFERPY_DIR not in sys.path:
 JOBS_DIR = os.path.join(os.path.expanduser("~"), ".dxfify_jobs")
 os.makedirs(JOBS_DIR, exist_ok=True)
 
+
+def _get_downloads_dir() -> str:
+    """Return the platform-native Downloads folder path.
+
+    Windows: Uses KNOWNFOLDERID via ctypes (locale-safe).
+    macOS:   ~/Downloads (standard on all macOS locales).
+    Linux:   Reads XDG user-dirs, falls back to ~/Downloads.
+    """
+    import platform as _platform
+    system = _platform.system()
+
+    if system == "Windows":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            GUID = ctypes.c_char * 16
+            _SHGetKnownFolderPath = ctypes.windll.shell32.SHGetKnownFolderPath
+            _CoTaskMemFree = ctypes.windll.ole32.CoTaskMemFree
+            # {374DE290-123F-4565-9164-39C4925E467B} = Downloads
+            downloads_guid = GUID(
+                b'\x90\xe2\x4d\x37\x3f\x12\x65\x45\x91\x64\x39\xc4\x92\x5e\x46\x7b'
+            )
+            path_ptr = ctypes.c_wchar_p()
+            _SHGetKnownFolderPath(
+                ctypes.byref(downloads_guid), 0, None, ctypes.byref(path_ptr)
+            )
+            result = path_ptr.value
+            _CoTaskMemFree(path_ptr)
+            if result:
+                return result
+        except Exception:
+            pass
+        # Fallback for Windows
+        return os.path.join(os.path.expanduser("~"), "Downloads")
+
+    elif system == "Darwin":
+        return os.path.join(os.path.expanduser("~"), "Downloads")
+
+    else:  # Linux / other POSIX
+        try:
+            xdg_config = os.path.join(
+                os.environ.get("XDG_CONFIG_HOME", os.path.join(os.path.expanduser("~"), ".config")),
+                "user-dirs.dirs",
+            )
+            if os.path.isfile(xdg_config):
+                with open(xdg_config, "r") as f:
+                    for line in f:
+                        if line.startswith("XDG_DOWNLOAD_DIR"):
+                            path = line.split("=", 1)[1].strip().strip('"')
+                            path = path.replace("$HOME", os.path.expanduser("~"))
+                            if os.path.isdir(path):
+                                return path
+        except Exception:
+            pass
+        return os.path.join(os.path.expanduser("~"), "Downloads")
+
+
 app = Flask(__name__, static_folder=WEB_DIST_DIR, static_url_path="")
 
 
@@ -129,6 +186,11 @@ def convert():
         file.save(input_path)
 
         sheet_size = request.form.get("sheetSize", "a4")
+        custom_w = request.form.get("customWidthMm")
+        custom_h = request.form.get("customHeightMm")
+        custom_w_mm = float(custom_w) if custom_w else None
+        custom_h_mm = float(custom_h) if custom_h else None
+
         mask_threshold = int(request.form.get("maskThreshold", 240))
         erosion_kernel = int(request.form.get("erosionKernel", 3))
         erosion_iterations = int(request.form.get("erosionIterations", 1))
@@ -157,6 +219,8 @@ def convert():
             epsilon_max=epsilon_max,
             curve_strategy=curve_strategy,
             detect_details=detect_details,
+            custom_w_mm=custom_w_mm,
+            custom_h_mm=custom_h_mm,
         )
 
         files = get_job_files(job_id)
@@ -256,6 +320,7 @@ def generate_aruco_paper_route():
         margin_x_mm = float(data.get("margin_x_mm", 32.2))
         margin_y_mm = float(data.get("margin_y_mm", 34.2))
         show_ruler = str(data.get("show_ruler", "true")).lower() in ["true", "1", "yes"]
+        show_header_text = str(data.get("show_header_text", "false")).lower() in ["true", "1", "yes"]
         fmt = data.get("format", "pdf").lower()
 
         if fmt == "svg":
@@ -268,6 +333,7 @@ def generate_aruco_paper_route():
                 margin_x_mm=margin_x_mm,
                 margin_y_mm=margin_y_mm,
                 show_ruler=show_ruler,
+                show_header_text=show_header_text,
             )
             return Response(
                 svg_str,
@@ -284,6 +350,7 @@ def generate_aruco_paper_route():
                 margin_x_mm=margin_x_mm,
                 margin_y_mm=margin_y_mm,
                 show_ruler=show_ruler,
+                show_header_text=show_header_text,
             )
             return Response(
                 pdf_bytes,
@@ -295,8 +362,105 @@ def generate_aruco_paper_route():
         return jsonify({"success": False, "message": str(err)}), 500
 
 
+@app.route("/api/save-aruco-paper", methods=["GET", "POST"])
+def save_aruco_paper_route():
+    """Generate ArUco paper and save to a user-chosen file location."""
+    try:
+        import subprocess
+        from generate_aruco_paper import generate_aruco_svg, generate_aruco_paper_pdf
+
+        if request.method == "POST" and request.is_json:
+            data = request.get_json() or {}
+        else:
+            data = request.args.to_dict()
+
+        paper_type = data.get("paper_type", "A4")
+        custom_w = float(data.get("custom_w", 210.0))
+        custom_h = float(data.get("custom_h", 297.0))
+        orientation = data.get("orientation", "portrait")
+        marker_size_mm = float(data.get("marker_size_mm", 30.0))
+        margin_x_mm = float(data.get("margin_x_mm", 32.2))
+        margin_y_mm = float(data.get("margin_y_mm", 34.2))
+        show_ruler = str(data.get("show_ruler", "true")).lower() in ["true", "1", "yes"]
+        show_header_text = str(data.get("show_header_text", "false")).lower() in ["true", "1", "yes"]
+        fmt = data.get("format", "pdf").lower()
+
+        default_name = f"dxfify_aruco_{paper_type}_{orientation}.{fmt}"
+
+        # Cross-platform Downloads folder detection
+        downloads_dir = _get_downloads_dir()
+        os.makedirs(downloads_dir, exist_ok=True)
+        save_path = os.path.join(downloads_dir, default_name)
+
+        if fmt == "svg":
+            content = generate_aruco_svg(
+                paper_type=paper_type,
+                custom_w=custom_w,
+                custom_h=custom_h,
+                orientation=orientation,
+                marker_size_mm=marker_size_mm,
+                margin_x_mm=margin_x_mm,
+                margin_y_mm=margin_y_mm,
+                show_ruler=show_ruler,
+                show_header_text=show_header_text,
+            )
+            with open(save_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        else:
+            content = generate_aruco_paper_pdf(
+                paper_type=paper_type,
+                custom_w=custom_w,
+                custom_h=custom_h,
+                orientation=orientation,
+                marker_size_mm=marker_size_mm,
+                margin_x_mm=margin_x_mm,
+                margin_y_mm=margin_y_mm,
+                show_ruler=show_ruler,
+                show_header_text=show_header_text,
+            )
+            with open(save_path, "wb") as f:
+                f.write(content)
+
+        logger.info(f"[save-aruco-paper] Saved {fmt.upper()} to: {save_path}")
+        return jsonify({"success": True, "message": f"Saved to {save_path}", "path": save_path, "filename": default_name})
+
+    except Exception as err:
+        logger.error(f"[API /save-aruco-paper ERROR] {err}", exc_info=True)
+        return jsonify({"success": False, "message": str(err)}), 500
+
+
+@app.route("/api/save-file", methods=["POST"])
+def save_file_route():
+    """Generic endpoint to save text or binary (base64) files to user's Downloads folder."""
+    try:
+        data = request.get_json() or {}
+        filename = data.get("filename", "export.file")
+        content = data.get("content", "")
+        is_base64 = data.get("isBase64", False)
+
+        downloads_dir = _get_downloads_dir()
+        os.makedirs(downloads_dir, exist_ok=True)
+        save_path = os.path.join(downloads_dir, filename)
+
+        if is_base64:
+            import base64
+            file_bytes = base64.b64decode(content)
+            with open(save_path, "wb") as f:
+                f.write(file_bytes)
+        else:
+            with open(save_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        logger.info(f"[save-file] Saved {filename} to: {save_path}")
+        return jsonify({"success": True, "message": f"Saved to {save_path}", "path": save_path, "filename": filename})
+    except Exception as err:
+        logger.error(f"[API /save-file ERROR] {err}", exc_info=True)
+        return jsonify({"success": False, "message": str(err)}), 500
+
+
 def run_server(port: int = 3001) -> None:
     """Starts local server."""
     logger.info(f"[desktop-server] Serving DXFify Desktop API & Static UI on http://127.0.0.1:{port}")
     sys.stdout.flush()
     app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+

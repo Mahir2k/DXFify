@@ -110,8 +110,30 @@ export function SettingsPanel({ settings, onChange }: SettingsPanelProps) {
             <option value="a1">A1</option>
             <option value="letter">Letter</option>
             <option value="legal">Legal</option>
+            <option value="custom">Custom</option>
           </select>
         </label>
+
+        {settings.sheetSize === 'custom' && (
+          <div style={{ display: 'flex', gap: '8px', gridColumn: '1 / -1' }}>
+            <label style={{ flex: 1 }}>
+              <span>Width (mm)</span>
+              <input
+                type="number"
+                value={settings.customWidthMm ?? 210}
+                onChange={(e) => update('customWidthMm', parseFloat(e.target.value) || 100)}
+              />
+            </label>
+            <label style={{ flex: 1 }}>
+              <span>Height (mm)</span>
+              <input
+                type="number"
+                value={settings.customHeightMm ?? 297}
+                onChange={(e) => update('customHeightMm', parseFloat(e.target.value) || 100)}
+              />
+            </label>
+          </div>
+        )}
 
         <label>
           <span>Curve Strategy</span>

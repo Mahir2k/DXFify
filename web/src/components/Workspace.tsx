@@ -52,6 +52,7 @@ interface WorkspaceProps {
   onSubRegionSelect?: (bbox: [number, number, number, number]) => void;
   activeHoverSource?: 'dxf' | 'image' | null;
   onHoverSourceChange?: (source: 'dxf' | 'image' | null) => void;
+  onShowToast?: (message: string, type?: 'success' | 'error') => void;
 }
 
 export function Workspace({
@@ -91,6 +92,7 @@ export function Workspace({
   onSubRegionSelect,
   activeHoverSource = null,
   onHoverSourceChange,
+  onShowToast,
 }: WorkspaceProps) {
   
   const [toolboxWidth, setToolboxWidth] = useState(72);
@@ -229,7 +231,7 @@ export function Workspace({
           />
           <ReportPanel result={result} error={reportError} />
           <SettingsPanel settings={settings} onChange={onSettingsChange} />
-          <ArtifactList result={result} />
+          <ArtifactList result={result} onShowToast={onShowToast} />
         </div>
       )}
     </section>
