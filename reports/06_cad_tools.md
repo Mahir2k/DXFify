@@ -93,9 +93,13 @@ The interactive CAD editor in `web/src/components/DxfPreview.tsx` provides **25 
 - Multi-click tool placing sequential polyline vertices.
 - **Close Option**: Double-clicking or clicking near start vertex closes polyline (`closed = true`).
 
-#### 10. `spline` (Cubic Catmull-Rom B-Spline)
-- Multi-click tool generating a smooth parametric spline curve through control points using cubic B-spline matrix interpolation (`evaluateSplinePoints`):
-  $$\mathbf{P}(t) = \frac{1}{2} \begin{bmatrix} 1 & t & t^2 & t^3 \end{bmatrix} \begin{bmatrix} 0 & 2 & 0 & 0 \\ -1 & 0 & 1 & 0 \\ 2 & -5 & 4 & -1 \\ -1 & 3 & -3 & 1 \end{bmatrix} \begin{bmatrix} P_{i-1} \\ P_i \\ P_{i+1} \\ P_{i+2} \end{bmatrix}, \quad t \in [0, 1]$$
+#### 10. `spline` (Centripetal Catmull-Rom B-Spline)
+- Multi-click tool generating a smooth parametric spline curve through control points using **Centripetal Catmull-Rom Splines** ($\alpha = 0.5$, `evaluateSplinePoints`):
+  Knot parameters $t_i$ are calculated using square-root chord distances to prevent overshoots and loops:
+  $$t_i = t_{i-1} + \|P_i - P_{i-1}\|^{0.5}$$
+  Interpolation evaluates piecewise cubic polynomials:
+  $$\mathbf{P}(t) = \frac{t_2 - t}{t_2 - t_1}\mathbf{A}_1(t) + \frac{t - t_1}{t_2 - t_1}\mathbf{A}_2(t)$$
+  guaranteeing a cusp-free, loop-free, and spike-free curve across arbitrary control point spacing.
 
 #### 11. `rect-3pt` (3-Point Angled Rectangle)
 - 3-click tool creating an arbitrarily oriented rectangle defined by base segment $P_1 \to P_2$ and height vector $P_3$.
@@ -128,22 +132,25 @@ The interactive CAD editor in `web/src/components/DxfPreview.tsx` provides **25 
     Generates horizontal and vertical centerlines extending $125\%$ beyond bounding box bounds:
     $$dx = \max\left(3.0, \; 1.25 \frac{w}{2}\right), \quad dy = \max\left(3.0, \; 1.25 \frac{h}{2}\right)$$
     $$P_{horiz} = \left[ (c_x - dx, c_y), \; (c_x + dx, c_y) \right]$$
-    $$P_{vert} = \left[ (c_x, c_y - dy), \; (c_x, c_y + dy) \right]$$
+    $$P_{vert} = \left[ (c_x - dy, c_y), \; (c_x + dy, c_y) \right]$$
 
 ---
 
 ### Group 3: Modification & Editing Tools
 
-#### 15. `chamfer` (Beveled Corner)
-- Trims a sharp polyline corner vertex $V_i$ by replacing it with a flat chamfer segment set back by distance $d_{chamfer}$ along adjacent vectors $\mathbf{v}_1, \mathbf{v}_2$:
-  $$P_{c1} = V_i - d_{chamfer} \frac{\mathbf{v}_1}{\|\mathbf{v}_1\|}, \quad P_{c2} = V_i + d_{chamfer} \frac{\mathbf{v}_2}{\|\mathbf{v}_2\|}$$
+#### 15. `chamfer` (2-Point Beveled Corner)
+- 2-click tool replacing a corner section between point $P_1$ (segment $\text{seg}_1$) and point $P_2$ (segment $\text{seg}_2$) with a straight bevel segment $[P_{start}, P_{end}]$.
+- **Segment-Bounded Trimming**: Orders selection points by segment index ($\text{minSeg} = \min(\text{seg}_1, \text{seg}_2)$) and constructs the trimmed polyline:
+  $$\text{newPts} = \left[ \; \mathbf{pts}[0 \dots \text{minSeg}], \quad P_{start}, \quad P_{end}, \quad \mathbf{pts}[(\text{maxSeg} + 1) \dots n-1] \; \right]$$
+  preserving outer endpoints regardless of selection order.
 
-#### 16. `fillet` (Arc Rounded Corner)
-- Rounds a polyline corner vertex $V_i$ given corner interior angle $\theta_{corner}$ and target radius $R_{fillet}$.
-- **Tangent Setback & Arc Center Mathematics**:
-  $$\phi = \frac{\pi - \theta_{corner}}{2}$$
-  $$\text{Setback } d_{tangent} = \frac{R_{fillet}}{\tan\phi}, \quad \text{Center Distance } d_{center} = \frac{R_{fillet}}{\sin\phi}$$
-  Inserts an 8-segment polyline arc approximation connecting tangent points $T_1$ and $T_2$.
+#### 16. `fillet` (2-Point Inward Bézier Arc Fillet)
+- 2-click tool rounding a polyline corner between point $P_1$ and point $P_2$.
+- **Corner Detection & Bézier Fillet Mathematics**:
+  Finds the sharp corner vertex $C_{corner}$ across range $[\text{minSeg} + 1, \text{maxSeg}]$ maximizing perpendicular distance to line segment $(P_{start}, P_{end})$.
+  Evaluates a 16-point quadratic Bézier curve:
+  $$B(t) = (1-t)^2 P_{start} + 2(1-t)t C_{corner} + t^2 P_{end}, \quad t \in [0, 1]$$
+  guaranteeing an smooth, inward-curving corner arc.
 
 #### 17. `add-point` (Vertex Insertion)
 - Clicking an existing polyline segment inserts a new vertex node at the closest projected segment point.
@@ -154,8 +161,8 @@ The interactive CAD editor in `web/src/components/DxfPreview.tsx` provides **25 
 #### 19. `cut` (Polyline Splitting)
 - Splits a polyline at a designated vertex into two distinct polyline entities.
 
-#### 20. `fuse` (Endpoint Merging)
-- Merges two close polyline endpoints (within $15\text{ mm}$) into a shared midpoint vertex node.
+#### 20. `fuse` (2-Point Polyline Endpoint Fusion)
+- 2-click tool merging two close endpoints or separate polyline entities into a single continuous entity in workspace memory (`applyFuseTwoPoints`).
 
 #### 21. `mark-hole` (Layer Toggle)
 - Toggles target entity layer between **`OUTER`** (Color 7 / White) and **`HOLES`** (Color 1 / Red).

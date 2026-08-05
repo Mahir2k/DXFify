@@ -27,7 +27,9 @@ Raw neural network output masks exhibit blurred boundary edges. To restore crisp
 ```
 
 1. **Binarization**:
+
    $$M_{binary}(x,y) = \begin{cases} 255 & \text{if } P_{raw}(x,y) \cdot 255 \ge \text{maskThreshold} \\ 0 & \text{otherwise} \end{cases}$$
+
    *Default `maskThreshold` = 240.*
 
 2. **OpenCV Guided Filter Edge Refinement**:

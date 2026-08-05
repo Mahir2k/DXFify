@@ -92,6 +92,16 @@ The development of the **DXFify** platform progressed across seven distinct evol
   - Added multi-format client-side exporters (ASCII DXF, SVG, raw binary PDF 1.4).
   - **Unified Coordinate System Refactor** (`coordinateTransforms.ts`): Derived exact SVG matrix transform formula (`matrix(a, b, c, d, e, f)`), unifying homography, 2D rigid rotation composition, and image overlay synchronization.
 
+### Phase 8: Standalone Desktop App & CAD Tool Overhaul (August 1–5, 2026)
+- **Primary Objective**: Package standalone zero-dependency desktop application and execute deep CAD editing engine refactoring.
+- **Key Developments**:
+  - **Standalone Executable Packaging**: Bundled Flask backend, PyQt6 window shell, and ONNX Runtime neural weights into single-binary PyInstaller desktop bundle (`dist/dxfify`). Resolved process fork bombs (`freeze_support`) and transitive metadata imports.
+  - **2-Point CAD Tool Interaction Engine**: Refactored Fillet, Chamfer, Fuse, and B-Spline tools to support robust 2-point corner selection ($P_1, P_2$).
+  - **Inward Quadratic Bézier Fillet Arc Math**: Eliminated $270^\circ$ outward arc ballooning by replacing circular arc math with inward quadratic Bézier curves and maximum distance corner vertex detection.
+  - **Centripetal Catmull-Rom B-Splines**: Replaced uniform Catmull-Rom math with centripetal knot parameterization ($\alpha = 0.5$), eliminating overshoot spikes.
+  - **Segment-Bounded Polyline Trimming**: Resolved $166\text{ mm}$ spike loops by preserving outer endpoints ($V_0, V_{n-1}$) during 2-point array slice replacement.
+  - **Unified Real-Time SVG Preview**: Synchronized SVG dashed preview math 1-to-1 with final committed geometry.
+
 ---
 
 ## 3. Key Milestones Summary Table
@@ -105,3 +115,4 @@ The development of the **DXFify** platform progressed across seven distinct evol
 | **July 09** | Phase 5 | `dxferpy` | BiRefNet AI segmentation, guided filter, vectorization bug fixes |
 | **July 16** | Phase 6 | `dxfer/web` | Flask HTTP microservice, React web dashboard, SVG CAD viewer |
 | **July 27** | Phase 7 | `dxfer/web` | 25 CAD tools, sub-region reprocessing, coordinate transform math |
+| **August 05** | Phase 8 | `desktop` / `web` | PyInstaller standalone binary, 2-point CAD tool overhaul, centripetal splines |

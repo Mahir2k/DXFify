@@ -80,6 +80,7 @@ Before treating contours as piecewise-linear polygons, each contour is evaluated
 1. Compute the minimum enclosing circle radius $R$ and center $(C_x, C_y)$ via `cv2.minEnclosingCircle`.
 2. Compute actual contour area $A_{contour}$ and theoretical enclosing circle area $A_{circle} = \pi R^2$.
 3. Compute circularity ratio:
+
 $$\rho = \frac{A_{contour}}{\pi R^2}$$
 
 If $\rho \ge \text{circle\_ratio}$ (default 0.85), the contour is immediately classified as a CAD **`CIRCLE`** entity defined by center $(C_x, C_y)$ and radius $R$, skipping polygon simplification entirely.
@@ -111,6 +112,7 @@ Objects with manufactured right angles (e.g. rectangular plates, mounting bracke
 
 1. **Segment Orientation Extraction**:
    For each line segment $(P_i, P_{i+1})$ in the simplified polyline, calculate length $L_i$ and angle $\theta_i \in [0^\circ, 180^\circ)$:
+
    $$\theta_i = \text{atan2}(y_{i+1} - y_i, x_{i+1} - x_i) \pmod{\pi}$$
 
 2. **Weighted Histogram Construction**:
@@ -118,6 +120,7 @@ Objects with manufactured right angles (e.g. rectangular plates, mounting bracke
 
 3. **5-Tap Gaussian Histogram Smoothing**:
    To prevent single-bin discretization artifacts, smooth $\mathbf{H}$ with a 1D Gaussian kernel $[0.05, 0.25, 0.40, 0.25, 0.05]$:
+
    $$\mathbf{H}_{smooth}[\theta] = \sum_{k=-2}^2 w_k \cdot \mathbf{H}[(\theta + k) \pmod{180}]$$
 
 4. **Dominant Peak Extraction**:
@@ -128,7 +131,9 @@ Objects with manufactured right angles (e.g. rectangular plates, mounting bracke
 
 6. **Adjacent Segment Intersection**:
    Recompute polyline vertices by solving the 2D linear intersection of adjacent snapped line equations:
+
    $$a_1 x + b_1 y = c_1, \quad a_2 x + b_2 y = c_2 \implies \begin{bmatrix} x \\ y \end{bmatrix} = \begin{bmatrix} a_1 & b_1 \\ a_2 & b_2 \end{bmatrix}^{-1} \begin{bmatrix} c_1 \\ c_2 \end{bmatrix}$$
+
    This eliminates rounded/mitered corner artifacts and produces perfectly sharp $90^\circ$ CAD corners.
 
 ---
@@ -147,17 +152,25 @@ When processing complex organic shapes or rounded corner fillets, standard linea
 
 ### 1. Douglas-Peucker Perpendicular Distance
 For each point $P_0(x_0, y_0)$ between segment endpoints $P_1(x_1, y_1)$ and $P_2(x_2, y_2)$, the perpendicular distance $d_{perp}$ is calculated as:
+
 $$d_{perp} = \frac{|(y_2 - y_1)x_0 - (x_2 - x_1)y_0 + x_2 y_1 - y_2 x_1|}{\sqrt{(y_2 - y_1)^2 + (x_2 - x_1)^2}}$$
+
 If $\max(d_{perp}) > \epsilon$, the contour is split recursively at the point of maximum deviation.
 
 ### 2. Pratt Algebraic Circle Fit (`fit_circle_pratt`)
 Solves the algebraic circle equation $A(x^2 + y^2) + Bx + Cy + D = 0$ subject to constraint $B^2 + C^2 - 4AD = 1$.
 Constructs design matrix $\mathbf{Z}$ for $N$ contour points:
+
 $$\mathbf{Z}_i = \begin{bmatrix} x_i^2 + y_i^2 & x_i & y_i & 1 \end{bmatrix}$$
+
 Solves generalized eigenvalue problem $\mathbf{M} \mathbf{A} = \lambda \mathbf{C} \mathbf{A}$ where $\mathbf{M} = \frac{1}{N} \mathbf{Z}^T \mathbf{Z}$ and constraint matrix $\mathbf{C}$:
+
 $$\mathbf{C} = \begin{bmatrix} 0 & 0 & 0 & -2 \\ 0 & 1 & 0 & 0 \\ 0 & 0 & 1 & 0 \\ -2 & 0 & 0 & 0 \end{bmatrix}$$
+
 Circle center $(c_x, c_y)$ and radius $r$ are extracted directly from eigenvector coefficients $\mathbf{A} = [A, B, C, D]^T$:
+
 $$c_x = -\frac{B}{2A}, \quad c_y = -\frac{C}{2A}, \quad r = \frac{\sqrt{B^2 + C^2 - 4AD}}{2|A|}$$
+
 This algebraic fit is completely immune to partial arc coverage, recovering exact CAD radii for rounded fillets.
 
 ![AirPod Case Smooth Arc Curve Vectorization Output](./assets/10_airpod_case_contour.png)

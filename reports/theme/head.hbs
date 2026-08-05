@@ -1,0 +1,49 @@
+<!-- KaTeX Math Rendering with Auto-Render & Markdown Escape Fix -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        var containers = document.querySelectorAll("p, li, td, th, div.content main");
+        containers.forEach(function(el) {
+            let html = el.innerHTML;
+            if (html.includes("$") || html.includes("\\(") || html.includes("\\[")) {
+                // Restore <em> and <i> tags that pulldown-cmark created from TeX underscores _
+                html = html.replace(/<em>(.*?)<\/em>/gi, function(match, inner) {
+                    if (inner.length > 1 && !inner.startsWith("{")) {
+                        return "_{" + inner + "}";
+                    } else {
+                        return "_" + inner;
+                    }
+                }).replace(/<i>(.*?)<\/i>/gi, function(match, inner) {
+                    if (inner.length > 1 && !inner.startsWith("{")) {
+                        return "_{" + inner + "}";
+                    } else {
+                        return "_" + inner;
+                    }
+                });
+
+                // Fix single backslashes in \begin{...} environments
+                if (html.includes("\\begin{")) {
+                    html = html.replace(/\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\1\}/g, function(match, env, contents) {
+                        var fixedContents = contents.replace(/\\(?=[ \n\r])/g, "\\\\");
+                        return "\\begin{" + env + "}" + fixedContents + "\\end{" + env + "}";
+                    });
+                }
+
+                el.innerHTML = html;
+            }
+        });
+
+        // Render KaTeX across the document body
+        renderMathInElement(document.body, {
+            delimiters: [
+                {left: '$$', right: '$$', display: true},
+                {left: '$', right: '$', display: false},
+                {left: '\\(', right: '\\)', display: false},
+                {left: '\\[', right: '\\]', display: true}
+            ],
+            throwOnError : false
+        });
+    });
+</script>

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import type { ConversionResult, ToolId, Viewport, GeometryEntity, ActiveDrawingState } from '../types';
 import { Ruler } from './Ruler';
 import { CadStatusBar } from './dxf/CadStatusBar';
-import { computeCircumcircle, evaluateSplinePoints, distToSegment, computeBoundingBox } from '../utils/geometryUtils';
+import { computeCircumcircle, evaluateSplinePoints, computeFilletArc, computeFilletBetweenTwoPoints, distToSegment, computeBoundingBox } from '../utils/geometryUtils';
 import * as THREE from 'three';
 
 
@@ -120,6 +120,12 @@ export function DxfPreview({
   const [circle3PtPoints, setCircle3PtPoints] = useState<[number, number][]>([]);
   const [slot4PtPoints, setSlot4PtPoints] = useState<[number, number][]>([]);
   const [splinePoints, setSplinePoints] = useState<[number, number][]>([]);
+  const [cadToolSelectedPoints, setCadToolSelectedPoints] = useState<Array<{
+    entityIdx: number;
+    ptIdx?: number;
+    segIdx?: number;
+    pt: [number, number];
+  }>>([]);
   const [subregionBox, setSubregionBox] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null);
 
   const [selectedEntityIndices, setSelectedEntityIndices] = useState<number[]>([]);
@@ -203,6 +209,7 @@ export function DxfPreview({
     setCircle3PtPoints([]);
     setSlot4PtPoints([]);
     setSplinePoints([]);
+    setCadToolSelectedPoints([]);
     setSubregionBox(null);
     if (selectedTool !== 'select' && selectedTool !== 'subregion-select') {
       setSelectedEntityIndices([]);
@@ -222,6 +229,30 @@ export function DxfPreview({
         setSelectedEntityIndices([]);
         setSelectionMarquee(null);
         setTransformMode(null);
+        setSplinePoints([]);
+        setCadToolSelectedPoints([]);
+        onActiveDrawingChange?.(null);
+      } else if (e.key === 'Enter') {
+        if (selectedTool === 'polyline' && drawPoints.length > 1) {
+          onEntitiesChange([...entities, {
+            type: 'polyline',
+            layer: 'OUTER',
+            points: drawPoints,
+            closed: false
+          }]);
+          setDrawPoints([]);
+          onActiveDrawingChange?.(null);
+        } else if (selectedTool === 'spline' && splinePoints.length >= 2) {
+          const evaluated = evaluateSplinePoints(splinePoints);
+          onEntitiesChange([...entities, {
+            type: 'polyline',
+            layer: 'OUTER',
+            points: evaluated,
+            closed: false
+          }]);
+          setSplinePoints([]);
+          onActiveDrawingChange?.(null);
+        }
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEntityIndices.length > 0) {
         const target = e.target as HTMLElement;
         if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) {
@@ -240,7 +271,7 @@ export function DxfPreview({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [entities, selectedEntityIndices, onEntitiesChange, selectedTool, brushShape, onBrushShapeChange]);
+  }, [entities, selectedEntityIndices, onEntitiesChange, selectedTool, brushShape, onBrushShapeChange, drawPoints, splinePoints, onActiveDrawingChange]);
 
   useEffect(() => {
     return () => {
@@ -415,26 +446,6 @@ export function DxfPreview({
     const cy = (p1_sq * (p3[0] - p2[0]) + p2_sq * (p1[0] - p3[0]) + p3_sq * (p2[0] - p1[0])) / d;
     const r = Math.hypot(p1[0] - cx, p1[1] - cy);
     return { cx, cy, r };
-  }
-
-  function evaluateSplinePoints(pts: [number, number][], numPerSeg = 10): [number, number][] {
-    if (pts.length < 2) return pts;
-    if (pts.length === 2) return pts;
-    const res: [number, number][] = [];
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[Math.max(0, i - 1)];
-      const p1 = pts[i];
-      const p2 = pts[i + 1];
-      const p3 = pts[Math.min(pts.length - 1, i + 2)];
-      for (let t = 0; t <= 1; t += 1 / numPerSeg) {
-        const t2 = t * t;
-        const t3 = t2 * t;
-        const x = 0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3);
-        const y = 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[0] + p3[0]) * t3);
-        res.push([x, y]);
-      }
-    }
-    return res;
   }
 
   useEffect(() => {
@@ -865,7 +876,9 @@ export function DxfPreview({
     const grabRadius = 5.5 * distanceScale * 2.2;
     let foundNode: { entityIdx: number; type: 'vertex' | 'center' | 'radius'; ptIdx?: number } | null = null;
 
-    if (selectedTool === 'select' || selectedTool === 'delete-point' || selectedTool === 'add-point') {
+    const toolsWithNodes = ['select', 'delete-point', 'add-point', 'fillet', 'chamfer', 'fuse', 'cut', 'delete'];
+    if (toolsWithNodes.includes(selectedTool)) {
+      const nodeHitRadius = (selectedTool === 'fillet' || selectedTool === 'chamfer' || selectedTool === 'fuse') ? grabRadius * 1.8 : grabRadius;
       for (let entityIdx = 0; entityIdx < entities.length; entityIdx++) {
         const entity = entities[entityIdx];
         const layer = entity.layer;
@@ -890,7 +903,7 @@ export function DxfPreview({
           for (let ptIdx = 0; ptIdx < entity.points.length; ptIdx++) {
             const pt = entity.points[ptIdx];
             const dPt = Math.hypot(coords.x - pt[0], coords.y - pt[1]);
-            if (dPt < grabRadius) {
+            if (dPt < nodeHitRadius) {
               foundNode = { entityIdx, type: 'vertex', ptIdx };
               break;
             }
@@ -935,9 +948,289 @@ export function DxfPreview({
     return true;
   };
 
+  const applyTwoPointFilletOrChamfer = (
+    p1: { entityIdx: number; ptIdx?: number; segIdx?: number; pt: [number, number] },
+    p2: { entityIdx: number; ptIdx?: number; segIdx?: number; pt: [number, number] },
+    tool: ToolId
+  ) => {
+    let entIdx = p1.entityIdx;
+    if (p1.entityIdx !== p2.entityIdx) {
+      const fusedIdx = applyFuseTwoPoints(p1, p2);
+      if (fusedIdx === -1) return;
+      entIdx = fusedIdx;
+    }
+
+    const ent = entities[entIdx];
+    if (!ent || ent.type !== 'polyline' || !ent.points || ent.points.length < 2) return;
+
+    const pts = ent.points;
+    let seg1 = p1.segIdx;
+    if (seg1 == null && p1.ptIdx != null) {
+      seg1 = Math.max(0, Math.min(pts.length - 2, p1.ptIdx > 0 ? p1.ptIdx - 1 : 0));
+    }
+    let seg2 = p2.segIdx;
+    if (seg2 == null && p2.ptIdx != null) {
+      seg2 = Math.max(0, Math.min(pts.length - 2, p2.ptIdx > 0 ? p2.ptIdx - 1 : 0));
+    }
+
+    if (seg1 == null || seg2 == null || seg1 === seg2) return;
+
+    const minSeg = Math.min(seg1, seg2);
+    const maxSeg = Math.max(seg1, seg2);
+
+    const startPt = minSeg === seg1 ? p1.pt : p2.pt;
+    const endPt = minSeg === seg1 ? p2.pt : p1.pt;
+    if (!startPt || !endPt || startPt[0] == null || endPt[0] == null) return;
+
+    let cornerPt: [number, number] = pts[minSeg + 1] ?? startPt;
+    let maxDist = -1;
+    for (let k = minSeg + 1; k <= maxSeg; k++) {
+      const v = pts[k];
+      if (!v || v[0] == null) continue;
+      const d = distToSegment(v[0], v[1], startPt[0], startPt[1], endPt[0], endPt[1]);
+      if (d > maxDist) {
+        maxDist = d;
+        cornerPt = v;
+      }
+    }
+
+    const res = computeFilletBetweenTwoPoints(startPt, endPt, cornerPt, 16);
+    const replacement = (tool === 'chamfer' || !res || res.arcPts.length === 0)
+      ? [startPt, endPt]
+      : [res.pStart, ...res.arcPts, res.pEnd];
+
+    const newPts = [
+      ...pts.slice(0, minSeg + 1),
+      ...replacement,
+      ...pts.slice(maxSeg + 1),
+    ];
+
+    const newEntities = [...entities];
+    newEntities[entIdx] = { ...ent, points: newPts };
+    onEntitiesChange(newEntities, true);
+  };
+
+  const applyFuseTwoPoints = (
+    p1: { entityIdx: number; ptIdx?: number; pt: [number, number] },
+    p2: { entityIdx: number; ptIdx?: number; pt: [number, number] }
+  ): number => {
+    const mid: [number, number] = [(p1.pt[0] + p2.pt[0]) / 2, (p1.pt[1] + p2.pt[1]) / 2];
+
+    if (p1.entityIdx === p2.entityIdx) {
+      const ent = entities[p1.entityIdx];
+      if (ent && ent.points && ent.points.length >= 2 && p1.ptIdx != null && p2.ptIdx != null) {
+        const len = ent.points.length;
+        const isStartEnd = (p1.ptIdx === 0 && p2.ptIdx === len - 1) || (p2.ptIdx === 0 && p1.ptIdx === len - 1);
+        const newPts = [...ent.points];
+        if (isStartEnd) {
+          newPts[0] = mid;
+          newPts[len - 1] = mid;
+          const newEntities = [...entities];
+          newEntities[p1.entityIdx] = { ...ent, points: newPts, closed: true };
+          onEntitiesChange(newEntities, true);
+          return p1.entityIdx;
+        } else if (Math.abs(p1.ptIdx - p2.ptIdx) === 1) {
+          const minIdx = Math.min(p1.ptIdx, p2.ptIdx);
+          newPts[minIdx] = mid;
+          newPts.splice(minIdx + 1, 1);
+          const newEntities = [...entities];
+          newEntities[p1.entityIdx] = { ...ent, points: newPts };
+          onEntitiesChange(newEntities, true);
+          return p1.entityIdx;
+        } else {
+          newPts[p1.ptIdx] = mid;
+          newPts[p2.ptIdx] = mid;
+          const newEntities = [...entities];
+          newEntities[p1.entityIdx] = { ...ent, points: newPts };
+          onEntitiesChange(newEntities, true);
+          return p1.entityIdx;
+        }
+      }
+    } else {
+      const e1 = entities[p1.entityIdx];
+      const e2 = entities[p2.entityIdx];
+      if (e1 && e2 && e1.type === 'polyline' && e2.type === 'polyline' && e1.points && e2.points) {
+        const i1 = p1.ptIdx ?? (Math.hypot(p1.pt[0] - e1.points[0][0], p1.pt[1] - e1.points[0][1]) < Math.hypot(p1.pt[0] - e1.points[e1.points.length - 1][0], p1.pt[1] - e1.points[e1.points.length - 1][1]) ? 0 : e1.points.length - 1);
+        const i2 = p2.ptIdx ?? (Math.hypot(p2.pt[0] - e2.points[0][0], p2.pt[1] - e2.points[0][1]) < Math.hypot(p2.pt[0] - e2.points[e2.points.length - 1][0], p2.pt[1] - e2.points[e2.points.length - 1][1]) ? 0 : e2.points.length - 1);
+
+        let pts1 = [...e1.points];
+        let pts2 = [...e2.points];
+
+        if (i1 === 0) pts1.reverse();
+        if (i2 === e2.points.length - 1) pts2.reverse();
+
+        pts1[pts1.length - 1] = mid;
+        pts2[0] = mid;
+
+        const combinedPts: [number, number][] = [...pts1, ...pts2.slice(1)];
+        const fusedEntity: GeometryEntity = {
+          ...e1,
+          points: combinedPts,
+          closed: false,
+        };
+
+        const minIdx = Math.min(p1.entityIdx, p2.entityIdx);
+        const maxIdx = Math.max(p1.entityIdx, p2.entityIdx);
+
+        const newEntities = entities.filter((_, idx) => idx !== minIdx && idx !== maxIdx);
+        newEntities.push(fusedEntity);
+        onEntitiesChange(newEntities, true);
+        return newEntities.length - 1;
+      }
+    }
+    return -1;
+  };
+
+  const handleFuseClick = (coords: { x: number; y: number }, clickedNode?: { entityIdx: number; ptIdx: number }) => {
+    const distanceScale = viewWidth / 300;
+    let target: { entityIdx: number; ptIdx: number; pt: [number, number] } | null = null;
+
+    if (clickedNode && clickedNode.entityIdx >= 0 && clickedNode.ptIdx != null) {
+      const ent = entities[clickedNode.entityIdx];
+      if (ent && ent.points && ent.points[clickedNode.ptIdx]) {
+        target = {
+          entityIdx: clickedNode.entityIdx,
+          ptIdx: clickedNode.ptIdx,
+          pt: ent.points[clickedNode.ptIdx],
+        };
+      }
+    }
+
+    if (!target) {
+      let minD = 25.0 * distanceScale;
+      entities.forEach((ent, entIdx) => {
+        if (ent.type === 'polyline' && ent.points) {
+          ent.points.forEach((pt, ptIdx) => {
+            const d = Math.hypot(coords.x - pt[0], coords.y - pt[1]);
+            if (d < minD) {
+              minD = d;
+              target = { entityIdx: entIdx, ptIdx, pt };
+            }
+          });
+        }
+      });
+    }
+
+    if (!target) return;
+
+    if (cadToolSelectedPoints.length === 0) {
+      setCadToolSelectedPoints([target]);
+    } else {
+      const p1 = cadToolSelectedPoints[0];
+      const p2 = target;
+      if (p1.entityIdx === p2.entityIdx && p1.ptIdx === p2.ptIdx) {
+        return;
+      }
+      applyFuseTwoPoints(p1, p2);
+      setCadToolSelectedPoints([]);
+    }
+  };
+
+  const handleFilletOrChamferClick = (coords: { x: number; y: number }, clickedNode?: { entityIdx: number; ptIdx: number }, tool: ToolId = selectedTool) => {
+    const distanceScale = viewWidth / 300;
+
+    let target: { entityIdx: number; ptIdx?: number; segIdx?: number; pt: [number, number] } | null = null;
+
+    if (clickedNode && clickedNode.entityIdx >= 0 && clickedNode.ptIdx != null) {
+      const ent = entities[clickedNode.entityIdx];
+      if (ent && ent.points && ent.points[clickedNode.ptIdx]) {
+        target = {
+          entityIdx: clickedNode.entityIdx,
+          ptIdx: clickedNode.ptIdx,
+          pt: ent.points[clickedNode.ptIdx],
+        };
+      }
+    }
+
+    if (!target) {
+      interface BestVertexType { entityIdx: number; ptIdx: number; pt: [number, number] }
+      interface BestSegType { entityIdx: number; segIdx: number; p1: [number, number]; p2: [number, number]; proj: [number, number] }
+
+      let bestVertex: BestVertexType | null = null;
+      let minVertexD = 15.0 * distanceScale;
+
+      let bestSegment: BestSegType | null = null;
+      let minSegD = 15.0 * distanceScale;
+
+      for (let entIdx = 0; entIdx < entities.length; entIdx++) {
+        const ent = entities[entIdx];
+        if (ent.type === 'polyline' && ent.points && ent.points.length >= 2) {
+          const pts = ent.points;
+          const n = pts.length;
+          const isClosed = ent.closed === true;
+
+          for (let ptIdx = 0; ptIdx < n; ptIdx++) {
+            const pt = pts[ptIdx];
+            const d = Math.hypot(coords.x - pt[0], coords.y - pt[1]);
+            if (d < minVertexD) {
+              minVertexD = d;
+              bestVertex = { entityIdx: entIdx, ptIdx, pt };
+            }
+          }
+
+          for (let i = 0; i < n; i++) {
+            const p1 = pts[i];
+            const p2 = pts[(i + 1) % n];
+            const dx = p2[0] - p1[0];
+            const dy = p2[1] - p1[1];
+            const l2 = dx * dx + dy * dy;
+            if (l2 === 0) continue;
+            let t = ((coords.x - p1[0]) * dx + (coords.y - p1[1]) * dy) / l2;
+            t = Math.max(0, Math.min(1, t));
+            const projX = p1[0] + t * dx;
+            const projY = p1[1] + t * dy;
+            const d = Math.hypot(coords.x - projX, coords.y - projY);
+            if (d < minSegD) {
+              minSegD = d;
+              bestSegment = { entityIdx: entIdx, segIdx: i, p1, p2, proj: [projX, projY] };
+            }
+          }
+        }
+      }
+
+      if (bestVertex && minVertexD <= minSegD) {
+        target = { entityIdx: bestVertex.entityIdx, ptIdx: bestVertex.ptIdx, pt: bestVertex.pt };
+      } else if (bestSegment) {
+        target = { entityIdx: bestSegment.entityIdx, segIdx: bestSegment.segIdx, pt: bestSegment.proj };
+      }
+    }
+
+    if (!target) return;
+
+    if (cadToolSelectedPoints.length === 0) {
+      setCadToolSelectedPoints([target]);
+      return;
+    }
+
+    const p1 = cadToolSelectedPoints[0];
+    const p2 = target;
+
+    if (p1.entityIdx === p2.entityIdx && p1.ptIdx === p2.ptIdx && p1.segIdx === p2.segIdx && p1.ptIdx != null) {
+      return;
+    }
+
+    applyTwoPointFilletOrChamfer(p1, p2, tool);
+    setCadToolSelectedPoints([]);
+  };
+
   const handleVertexPointerDown = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number, pointIdx: number) => {
     e.stopPropagation();
-    handleStartNodeDragOrDelete({ type: 'vertex', entityIdx, ptIdx: pointIdx }, e.pointerId);
+    if (selectedTool === 'fillet' || selectedTool === 'chamfer') {
+      handleFilletOrChamferClick({ x: 0, y: 0 }, { entityIdx, ptIdx: pointIdx }, selectedTool);
+      return;
+    }
+    if (selectedTool === 'fuse') {
+      handleFuseClick({ x: 0, y: 0 }, { entityIdx, ptIdx: pointIdx });
+      return;
+    }
+    if (selectedTool === 'delete-point' || selectedTool === 'delete') {
+      handleStartNodeDragOrDelete({ type: 'vertex', entityIdx, ptIdx: pointIdx }, e.pointerId);
+      return;
+    }
+    if (selectedTool === 'select') {
+      handleStartNodeDragOrDelete({ type: 'vertex', entityIdx, ptIdx: pointIdx }, e.pointerId);
+      return;
+    }
   };
 
   const handleCircleCenterDragStart = (e: React.PointerEvent<SVGCircleElement>, entityIdx: number) => {
@@ -1281,47 +1574,7 @@ export function DxfPreview({
         }
       }
     } else if (selectedTool === 'fuse') {
-      const distanceScale = viewWidth / 300;
-      let closestPts: Array<{ entIdx: number; ptIdx: number; pt: [number, number]; dist: number }> = [];
-      entities.forEach((ent, entIdx) => {
-        if (ent.type === 'polyline' && ent.points) {
-          ent.points.forEach((pt, ptIdx) => {
-            const d = Math.hypot(clickCoords.x - pt[0], clickCoords.y - pt[1]);
-            if (d < 15.0 * distanceScale) {
-              closestPts.push({ entIdx, ptIdx, pt, dist: d });
-            }
-          });
-        }
-      });
-      closestPts.sort((a, b) => a.dist - b.dist);
-      if (closestPts.length >= 2) {
-        const p1 = closestPts[0];
-        const p2 = closestPts[1];
-        const mid: [number, number] = [(p1.pt[0] + p2.pt[0]) / 2, (p1.pt[1] + p2.pt[1]) / 2];
-        const newEntities = [...entities];
-        if (p1.entIdx === p2.entIdx) {
-          const ent = { ...newEntities[p1.entIdx] };
-          if (ent.points) {
-            const pts = [...ent.points];
-            pts[p1.ptIdx] = mid;
-            pts[p2.ptIdx] = mid;
-            ent.points = pts;
-            newEntities[p1.entIdx] = ent;
-          }
-        } else {
-          const e1 = newEntities[p1.entIdx];
-          const e2 = newEntities[p2.entIdx];
-          if (e1.type === 'polyline' && e2.type === 'polyline' && e1.points && e2.points) {
-            const pts1 = [...e1.points];
-            const pts2 = [...e2.points];
-            pts1[p1.ptIdx] = mid;
-            pts2[p2.ptIdx] = mid;
-            newEntities[p1.entIdx] = { ...e1, points: pts1 };
-            newEntities[p2.entIdx] = { ...e2, points: pts2 };
-          }
-        }
-        onEntitiesChange(newEntities);
-      }
+      handleFuseClick(clickCoords);
     } else if (selectedTool === 'arc') {
       if (arcStep === 0) {
         setArcStart(clickCoords);
@@ -1370,58 +1623,7 @@ export function DxfPreview({
     } else if (selectedTool === 'add-point') {
       handleAddPointClick(clickCoords);
     } else if (selectedTool === 'chamfer' || selectedTool === 'fillet') {
-      const distanceScale = viewWidth / 300;
-      let bestEntIdx = -1;
-      let bestPtIdx = -1;
-      let minD = 10.0 * distanceScale;
-
-      entities.forEach((ent, idx) => {
-        if (ent.type === 'polyline' && ent.points && ent.points.length >= 3) {
-          ent.points.forEach((pt, ptIdx) => {
-            const d = Math.hypot(clickCoords.x - pt[0], clickCoords.y - pt[1]);
-            if (d < minD) {
-              minD = d;
-              bestEntIdx = idx;
-              bestPtIdx = ptIdx;
-            }
-          });
-        }
-      });
-
-      if (bestEntIdx !== -1 && bestPtIdx !== -1) {
-        const ent = entities[bestEntIdx];
-        if (ent.points) {
-          const pts = ent.points;
-          const n = pts.length;
-          const prevPt = pts[(bestPtIdx - 1 + n) % n];
-          const currPt = pts[bestPtIdx];
-          const nextPt = pts[(bestPtIdx + 1) % n];
-
-          const d1 = Math.hypot(currPt[0] - prevPt[0], currPt[1] - prevPt[1]);
-          const d2 = Math.hypot(nextPt[0] - currPt[0], nextPt[1] - currPt[1]);
-          const radius = Math.min(d1, d2) * 0.25;
-
-          if (radius > 0.1) {
-            const u1: [number, number] = [(prevPt[0] - currPt[0]) / d1, (prevPt[1] - currPt[1]) / d1];
-            const u2: [number, number] = [(nextPt[0] - currPt[0]) / d2, (nextPt[1] - currPt[1]) / d2];
-
-            const pStart: [number, number] = [currPt[0] + u1[0] * radius, currPt[1] + u1[1] * radius];
-            const pEnd: [number, number] = [currPt[0] + u2[0] * radius, currPt[1] + u2[1] * radius];
-
-            let replacement: [number, number][] = [];
-            if (selectedTool === 'chamfer') {
-              replacement = [pStart, pEnd];
-            } else {
-              replacement = [pStart, [currPt[0], currPt[1]], pEnd];
-            }
-
-            const newPts = [...pts.slice(0, bestPtIdx), ...replacement, ...pts.slice(bestPtIdx + 1)];
-            const newEntities = [...entities];
-            newEntities[bestEntIdx] = { ...ent, points: newPts };
-            onEntitiesChange(newEntities);
-          }
-        }
-      }
+      handleFilletOrChamferClick(clickCoords, undefined, selectedTool);
     } else if (selectedTool === 'align') {
       const distanceScale = viewWidth / 300;
       if (!alignSelectedSegment) {
@@ -1830,6 +2032,27 @@ export function DxfPreview({
         closed: true
       }]);
       setDrawPoints([]);
+      onActiveDrawingChange?.(null);
+    } else if (selectedTool === 'spline' && splinePoints.length >= 2) {
+      let pts = [...splinePoints];
+      if (pts.length > 2) {
+        const last = pts[pts.length - 1];
+        const prev = pts[pts.length - 2];
+        if (Math.hypot(last[0] - prev[0], last[1] - prev[1]) < 0.1) {
+          pts = pts.slice(0, -1);
+        }
+      }
+      if (pts.length >= 2) {
+        const evaluated = evaluateSplinePoints(pts);
+        onEntitiesChange([...entities, {
+          type: 'polyline',
+          layer: 'OUTER',
+          points: evaluated,
+          closed: false
+        }]);
+      }
+      setSplinePoints([]);
+      onActiveDrawingChange?.(null);
     }
   };
 
@@ -2000,7 +2223,7 @@ export function DxfPreview({
                           return null;
                         })}
 
-                        {(selectedTool === 'select' || selectedTool === 'delete-point') && entities.map((entity, entityIdx) => {
+                        {['select', 'delete-point', 'add-point', 'fillet', 'chamfer', 'fuse', 'cut', 'delete'].includes(selectedTool) && entities.map((entity, entityIdx) => {
                           const layer = entity.layer;
                           if (layer === 'HOLES' && !holeLayerEnabled) return null;
                           if (layer === 'OUTER' && !outerLayerEnabled) return null;
@@ -2013,7 +2236,6 @@ export function DxfPreview({
 
                             return (
                               <g key={entityIdx}>
-                                {/* Center hover pulse ring */}
                                 {isCenterHovered && (
                                   <circle
                                     cx={entity.cx}
@@ -2025,7 +2247,6 @@ export function DxfPreview({
                                     style={{ pointerEvents: 'none' }}
                                   />
                                 )}
-                                {/* Center visual dot */}
                                 <circle
                                   cx={entity.cx}
                                   cy={entity.cy}
@@ -2035,7 +2256,6 @@ export function DxfPreview({
                                   strokeWidth={isCenterHovered ? nodeStrokeWidth * 1.8 : nodeStrokeWidth}
                                   style={{ pointerEvents: 'none', transition: 'r 0.15s ease, fill 0.15s ease' }}
                                 />
-                                {/* Center hit target rendered LAST so it captures clicks */}
                                 <circle
                                   cx={entity.cx}
                                   cy={entity.cy}
@@ -2046,7 +2266,6 @@ export function DxfPreview({
                                   onPointerUp={handleHandlePointerUp}
                                 />
 
-                                {/* Radius hover pulse ring */}
                                 {isRadiusHovered && (
                                   <circle
                                     cx={entity.cx + entity.r}
@@ -2058,7 +2277,6 @@ export function DxfPreview({
                                     style={{ pointerEvents: 'none' }}
                                   />
                                 )}
-                                {/* Radius visual dot */}
                                 <circle
                                   cx={entity.cx + entity.r}
                                   cy={entity.cy}
@@ -2068,7 +2286,6 @@ export function DxfPreview({
                                   strokeWidth={isRadiusHovered ? nodeStrokeWidth * 1.8 : nodeStrokeWidth}
                                   style={{ pointerEvents: 'none', transition: 'r 0.15s ease, fill 0.15s ease' }}
                                 />
-                                {/* Radius hit target rendered LAST so it captures clicks */}
                                 <circle
                                   cx={entity.cx + entity.r}
                                   cy={entity.cy}
@@ -2086,38 +2303,43 @@ export function DxfPreview({
                                 {entity.points.map((pt, ptIdx) => {
                                   const isVertexHovered = hoveredNode?.entityIdx === entityIdx && hoveredNode?.type === 'vertex' && hoveredNode?.ptIdx === ptIdx;
 
+                                  let nodeColor = 'var(--accent)';
+                                  if (selectedTool === 'delete-point' || selectedTool === 'delete') nodeColor = '#ff3b30';
+                                  else if (selectedTool === 'fillet') nodeColor = '#00e676';
+                                  else if (selectedTool === 'chamfer') nodeColor = '#ff9800';
+                                  else if (selectedTool === 'fuse') nodeColor = '#00bcd4';
+                                  else if (selectedTool === 'add-point') nodeColor = '#2196f3';
+                                  if (isVertexHovered) nodeColor = '#ffcc00';
+
                                   return (
                                     <g key={ptIdx}>
-                                      {/* Visual vertex handle dot */}
                                       <circle
                                         cx={pt[0]}
                                         cy={pt[1]}
-                                        r={isVertexHovered ? visualRadius * 1.6 : visualRadius}
-                                        fill={selectedTool === 'delete-point' ? '#ff3b30' : isVertexHovered ? '#ffcc00' : 'var(--accent)'}
+                                        r={isVertexHovered ? visualRadius * 2.0 : visualRadius * 1.2}
+                                        fill={nodeColor}
                                         stroke="#ffffff"
-                                        strokeWidth={isVertexHovered ? nodeStrokeWidth * 1.8 : nodeStrokeWidth}
+                                        strokeWidth={isVertexHovered ? nodeStrokeWidth * 2.0 : nodeStrokeWidth * 1.2}
                                         style={{ pointerEvents: 'none', transition: 'r 0.15s ease, fill 0.15s ease' }}
                                       />
-                                      {/* Hover pulse outer ring */}
                                       {isVertexHovered && (
                                         <circle
                                           cx={pt[0]}
                                           cy={pt[1]}
-                                          r={visualRadius * 2.5}
+                                          r={visualRadius * 3.0}
                                           fill="none"
                                           stroke="#ffcc00"
-                                          strokeWidth={nodeStrokeWidth * 1.5}
+                                          strokeWidth={nodeStrokeWidth * 2.0}
                                           strokeDasharray={`${nodeStrokeWidth * 2},${nodeStrokeWidth * 2}`}
                                           style={{ pointerEvents: 'none' }}
                                         />
                                       )}
-                                      {/* Transparent Hit target rendered LAST on top of visual dots */}
                                       <circle
                                         cx={pt[0]}
                                         cy={pt[1]}
-                                        r={grabRadius * 1.3}
+                                        r={grabRadius * 1.5}
                                         fill="transparent"
-                                        style={{ cursor: selectedTool === 'delete-point' ? 'pointer' : 'move', pointerEvents: 'all' }}
+                                        style={{ cursor: 'pointer', pointerEvents: 'all' }}
                                         onPointerDown={(e) => handleVertexPointerDown(e, entityIdx, ptIdx)}
                                         onPointerUp={handleHandlePointerUp}
                                       />
@@ -2129,6 +2351,132 @@ export function DxfPreview({
                           }
                           return null;
                         })}
+
+                        {/* Live 2-Point Fillet/Chamfer Preview */}
+                        {(selectedTool === 'fillet' || selectedTool === 'chamfer') && cadToolSelectedPoints.length === 1 && (cursorMm || hoveredNode) && (() => {
+                          const p1 = cadToolSelectedPoints[0];
+                          const ent = entities[p1.entityIdx];
+                          if (!ent || !ent.points) return null;
+
+                          const pts = ent.points;
+                          const n = pts.length;
+
+                          let seg1 = p1.segIdx;
+                          if (seg1 == null && p1.ptIdx != null) {
+                            seg1 = Math.max(0, Math.min(n - 2, p1.ptIdx > 0 ? p1.ptIdx - 1 : 0));
+                          }
+
+                          let targetPt: [number, number] = cursorMm ? [cursorMm.x, cursorMm.y] : p1.pt;
+                          let seg2: number | undefined = hoveredNode?.ptIdx != null ? Math.max(0, Math.min(n - 2, hoveredNode.ptIdx > 0 ? hoveredNode.ptIdx - 1 : 0)) : undefined;
+
+                          if (seg2 == null && cursorMm) {
+                            let minD = Infinity;
+                            for (let i = 0; i < n - 1; i++) {
+                              const d = distToSegment(cursorMm.x, cursorMm.y, pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]);
+                              if (d < minD) {
+                                minD = d;
+                                seg2 = i;
+                              }
+                            }
+                          }
+                          if (seg1 == null || seg2 == null || seg1 === seg2) return null;
+
+                          const minSeg = Math.min(seg1, seg2);
+                          const maxSeg = Math.max(seg1, seg2);
+
+                          const startPt = minSeg === seg1 ? p1.pt : targetPt;
+                          const endPt = minSeg === seg1 ? targetPt : p1.pt;
+                          if (!startPt || !endPt || startPt[0] == null || endPt[0] == null) return null;
+
+                          let cornerPt: [number, number] = pts[minSeg + 1] ?? startPt;
+                          let maxDist = -1;
+                          for (let k = minSeg + 1; k <= maxSeg; k++) {
+                            const v = pts[k];
+                            if (!v || v[0] == null) continue;
+                            const d = distToSegment(v[0], v[1], startPt[0], startPt[1], endPt[0], endPt[1]);
+                            if (d > maxDist) {
+                              maxDist = d;
+                              cornerPt = v;
+                            }
+                          }
+
+                          const color = selectedTool === 'fillet' ? '#00e676' : '#ff9800';
+
+                          if (selectedTool === 'chamfer') {
+                            return (
+                              <g style={{ pointerEvents: 'none' }}>
+                                <line
+                                  x1={startPt[0]}
+                                  y1={startPt[1]}
+                                  x2={endPt[0]}
+                                  y2={endPt[1]}
+                                  stroke={color}
+                                  strokeWidth={nodeStrokeWidth * 3}
+                                  strokeDasharray={`${nodeStrokeWidth * 2},${nodeStrokeWidth * 2}`}
+                                />
+                                <circle cx={startPt[0]} cy={startPt[1]} r={visualRadius * 1.6} fill={color} />
+                                <circle cx={endPt[0]} cy={endPt[1]} r={visualRadius * 1.6} fill={color} />
+                              </g>
+                            );
+                          } else {
+                            const res = computeFilletBetweenTwoPoints(startPt, endPt, cornerPt, 16);
+                            if (!res || res.arcPts.length === 0) {
+                              return (
+                                <g style={{ pointerEvents: 'none' }}>
+                                  <line x1={startPt[0]} y1={startPt[1]} x2={endPt[0]} y2={endPt[1]} stroke={color} strokeWidth={nodeStrokeWidth * 3} strokeDasharray={`${nodeStrokeWidth * 2},${nodeStrokeWidth * 2}`} />
+                                  <circle cx={startPt[0]} cy={startPt[1]} r={visualRadius * 1.6} fill={color} />
+                                  <circle cx={endPt[0]} cy={endPt[1]} r={visualRadius * 1.6} fill={color} />
+                                </g>
+                              );
+                            }
+                            const dStr = `M ${res.pStart[0]} ${res.pStart[1]} ` + res.arcPts.map(p => `L ${p[0]} ${p[1]}`).join(' ') + ` L ${res.pEnd[0]} ${res.pEnd[1]}`;
+                            return (
+                              <g style={{ pointerEvents: 'none' }}>
+                                <path d={dStr} fill="none" stroke={color} strokeWidth={nodeStrokeWidth * 3} strokeDasharray={`${nodeStrokeWidth * 2},${nodeStrokeWidth * 2}`} />
+                                <circle cx={res.pStart[0]} cy={res.pStart[1]} r={visualRadius * 1.6} fill={color} />
+                                <circle cx={res.pEnd[0]} cy={res.pEnd[1]} r={visualRadius * 1.6} fill={color} />
+                              </g>
+                            );
+                          }
+                        })()}
+
+                        {/* Live Fuse Preview */}
+                        {selectedTool === 'fuse' && cursorMm && (() => {
+                          const distanceScale = viewWidth / 300;
+                          let closestPts: Array<{ entIdx: number; ptIdx: number; pt: [number, number]; dist: number }> = [];
+                          entities.forEach((ent, entIdx) => {
+                            if (ent.type === 'polyline' && ent.points) {
+                              ent.points.forEach((pt, ptIdx) => {
+                                const d = Math.hypot(cursorMm.x - pt[0], cursorMm.y - pt[1]);
+                                if (d < 25.0 * distanceScale) {
+                                  closestPts.push({ entIdx, ptIdx, pt, dist: d });
+                                }
+                              });
+                            }
+                          });
+                          closestPts.sort((a, b) => a.dist - b.dist);
+                          if (closestPts.length < 2) return null;
+                          const p1 = closestPts[0];
+                          const p2 = closestPts[1];
+                          const mid: [number, number] = [(p1.pt[0] + p2.pt[0]) / 2, (p1.pt[1] + p2.pt[1]) / 2];
+
+                          return (
+                            <g style={{ pointerEvents: 'none' }}>
+                              <line
+                                x1={p1.pt[0]}
+                                y1={p1.pt[1]}
+                                x2={p2.pt[0]}
+                                y2={p2.pt[1]}
+                                stroke="#00bcd4"
+                                strokeWidth={nodeStrokeWidth * 3}
+                                strokeDasharray={`${nodeStrokeWidth * 2},${nodeStrokeWidth * 2}`}
+                              />
+                              <circle cx={p1.pt[0]} cy={p1.pt[1]} r={visualRadius * 1.8} fill="none" stroke="#00bcd4" strokeWidth={nodeStrokeWidth * 2} />
+                              <circle cx={p2.pt[0]} cy={p2.pt[1]} r={visualRadius * 1.8} fill="none" stroke="#00bcd4" strokeWidth={nodeStrokeWidth * 2} />
+                              <circle cx={mid[0]} cy={mid[1]} r={visualRadius * 1.4} fill="#00bcd4" />
+                            </g>
+                          );
+                        })()}
 
                         {measureStart && measureEnd && (() => {
                           const distance = Math.hypot(measureEnd.x - measureStart.x, measureEnd.y - measureStart.y);
@@ -2318,6 +2666,51 @@ export function DxfPreview({
                             strokeWidth={0.8 * handleScale}
                           />
                         )}
+
+                        {/* 2-Step Fuse Selection Indicator */}
+                        {selectedTool === 'fuse' && cadToolSelectedPoints.length === 1 && (() => {
+                          const p1 = cadToolSelectedPoints[0];
+                          return (
+                            <g style={{ pointerEvents: 'none' }}>
+                              <circle cx={p1.pt[0]} cy={p1.pt[1]} r={visualRadius * 3.0} fill="none" stroke="#00bcd4" strokeWidth={nodeStrokeWidth * 2.5} />
+                              <circle cx={p1.pt[0]} cy={p1.pt[1]} r={visualRadius * 1.5} fill="#00bcd4" />
+                              {cursorMm && (
+                                <line
+                                  x1={p1.pt[0]}
+                                  y1={p1.pt[1]}
+                                  x2={cursorMm.x}
+                                  y2={cursorMm.y}
+                                  stroke="#00bcd4"
+                                  strokeWidth={nodeStrokeWidth * 2}
+                                  strokeDasharray={`${nodeStrokeWidth * 2},${nodeStrokeWidth * 2}`}
+                                />
+                              )}
+                            </g>
+                          );
+                        })()}
+
+                        {/* 2-Step Fillet/Chamfer Selection Indicator */}
+                        {(selectedTool === 'fillet' || selectedTool === 'chamfer') && cadToolSelectedPoints.length === 1 && (() => {
+                          const target = cadToolSelectedPoints[0];
+                          const color = selectedTool === 'fillet' ? '#00e676' : '#ff9800';
+                          return (
+                            <g style={{ pointerEvents: 'none' }}>
+                              <circle cx={target.pt[0]} cy={target.pt[1]} r={visualRadius * 3.0} fill="none" stroke={color} strokeWidth={nodeStrokeWidth * 2.5} />
+                              <circle cx={target.pt[0]} cy={target.pt[1]} r={visualRadius * 1.5} fill={color} />
+                              {cursorMm && (
+                                <line
+                                  x1={target.pt[0]}
+                                  y1={target.pt[1]}
+                                  x2={cursorMm.x}
+                                  y2={cursorMm.y}
+                                  stroke={color}
+                                  strokeWidth={nodeStrokeWidth * 2}
+                                  strokeDasharray={`${nodeStrokeWidth * 2},${nodeStrokeWidth * 2}`}
+                                />
+                              )}
+                            </g>
+                          );
+                        })()}
 
                         {circle3PtPoints.length > 0 && (
                           <polyline

@@ -19,8 +19,13 @@ logging.basicConfig(
 logger = logging.getLogger("desktop_server")
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    BASE_DIR = sys._MEIPASS
+else:
+    BASE_DIR = REPO_ROOT
+
 DXFERPY_DIR = os.path.join(REPO_ROOT, "dxferpy")
-WEB_DIST_DIR = os.path.join(REPO_ROOT, "web", "dist")
+WEB_DIST_DIR = os.path.join(BASE_DIR, "web", "dist")
 
 if DXFERPY_DIR not in sys.path:
     sys.path.insert(0, DXFERPY_DIR)
@@ -29,6 +34,15 @@ JOBS_DIR = os.path.join(os.path.expanduser("~"), ".dxfify_jobs")
 os.makedirs(JOBS_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=WEB_DIST_DIR, static_url_path="")
+
+
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
 
 # Cached ONNX BiRefNet Session to avoid reloading model weights on every request
 _REMBG_SESSION = None

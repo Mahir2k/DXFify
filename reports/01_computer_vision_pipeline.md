@@ -62,6 +62,7 @@ corners, ids, rejected = detector.detectMarkers(gray_img)
 ```
 
 Each marker yields four pixel corner coordinates. The center point $(c_x, c_y)$ of each detected marker is computed via arithmetic mean:
+
 $$c_x = \frac{1}{4}\sum_{i=0}^3 x_i, \quad c_y = \frac{1}{4}\sum_{i=0}^3 y_i$$
 
 The marker centers are sorted by their integer IDs $[0, 1, 2, 3]$ to guarantee deterministic spatial correspondence regardless of camera orientation.
@@ -76,6 +77,7 @@ A 2D perspective transform (homography) maps points from an arbitrary 3D camera 
 Given a set of 4 source points $(x_i, y_i)$ in the camera image (detected marker centers in pixels) and 4 destination points $(u_i, v_i)$ in physical world space (target marker locations in millimeters scaled by resolution factor $S = 10.0\text{ px/mm}$):
 
 Expanding into homogeneous coordinates yields two independent linear equations per point pair:
+
 $$u_i = \frac{h_{11}x_i + h_{12}y_i + h_{13}}{h_{31}x_i + h_{32}y_i + h_{33}}, \quad v_i = \frac{h_{21}x_i + h_{22}y_i + h_{23}}{h_{31}x_i + h_{32}y_i + h_{33}}$$
 
 Setting $h_{33} = 1$, the $3 \times 3$ matrix $\mathbf{H}$ (8 degrees of freedom) is solved uniquely using OpenCV's Direct Linear Transformation (DLT) solver:

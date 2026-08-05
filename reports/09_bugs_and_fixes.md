@@ -249,5 +249,90 @@ os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
 )
 ```
 
+---
+
+## 15. Bug 14: 2-Point Chamfer Polyline Index Crossover & Twisting
+
+### Symptoms
+When performing a 2-point Chamfer operation by clicking Point 1 ($P_1$) and Point 2 ($P_2$), if $P_1$ was selected at a higher vertex array index than $P_2$ ($\text{idx}_1 > \text{idx}_2$), the generated chamfer segment crossed over itself in an 'X' shape, self-intersecting and twisting the polyline outline.
+
+![Chamfer Crossover Twisting Bug](./assets/15_chamfer_crossover_twist_bug.png)
+
+### Root Cause Analysis
+In `applyTwoPointFilletOrChamfer`, replacement points `[p1.pt, p2.pt]` were blindly inserted into the polyline vertex array without checking the relative array index ordering of $P_1$ and $P_2$. When $\text{idx}_1 > \text{idx}_2$, inserting `[p1.pt, p2.pt]` reversed the forward vertex direction of the segment, causing the edge to cross over previous points.
+
+### Technical Solution
+Enforced strict polyline winding order by ordering replacement points relative to `minIdx` and `maxIdx`:
+
+```typescript
+const minIdx = Math.min(idx1, idx2);
+const maxIdx = Math.max(idx1, idx2);
+
+const firstPt = minIdx === idx1 ? p1.pt : p2.pt;
+const secondPt = minIdx === idx1 ? p2.pt : p1.pt;
+```
+
+This guarantees that replacement segments always follow the forward polyline vertex direction, eliminating self-intersecting crossover twists.
+
+---
+
+## 16. Bug 15: 270° Outward Ballooning Fillet Arc Preview
+
+### Symptoms
+When hovering over a second vertex for the Fillet tool, the SVG dashed live preview arc bulged $270^\circ$ outward into empty space like a balloon, pointing away from the actual corner instead of rounding inward.
+
+![Outward Ballooning Fillet Preview Bug](./assets/16_fillet_outward_balloon_preview_bug.png)
+
+### Root Cause Analysis
+1. The circular arc preview math evaluated $\text{atan2}$ angles without checking corner interior bisector orientation, picking the $270^\circ$ outer arc instead of the $90^\circ$ inner corner arc.
+2. In `DxfPreview.tsx`, the live preview selected `cornerPt` using `ent.points[midI]` (where $\text{midI} = \lfloor(\text{idx}_1 + \text{idx}_2)/2\rfloor$). If indices were far apart, `midI` selected an arbitrary vertex 100mm away on a straight segment instead of the corner vertex.
+
+### Technical Solution
+1. Replaced circular arc math with **Inward Quadratic Bézier Fillet Arc Math** $B(t) = (1-t)^2 P_{start} + 2(1-t)t C_{corner} + t^2 P_{end}$. Because control point $C_{corner}$ is the sharp corner vertex, quadratic Bézier curves are mathematically guaranteed to curve inward towards the corner.
+2. Replaced `midI` array indexing with **Maximum Perpendicular Distance Corner Detection**:
+   The corner vertex $C_{corner}$ is selected as the vertex $V_k$ ($k \in [\text{minIdx}, \text{maxIdx}]$) that maximizes perpendicular distance to line segment $(P_{start}, P_{end})$.
+
+---
+
+## 17. Bug 17: Uniform Catmull-Rom Spline Overshoot & Vertical Spikes
+
+### Symptoms
+Placing control points for the B-Spline (`spline`) tool caused the generated curve to shoot $90^\circ$ vertically up and down across the canvas in massive overshoot spikes.
+
+![Catmull-Rom Spline Overshoot Spikes Bug](./assets/17_bspline_catmull_rom_spikes_bug.png)
+
+### Root Cause Analysis
+The spline evaluator used **Uniform Catmull-Rom Splines** ($\alpha = 0$). Uniform Catmull-Rom interpolation parameterizes intervals uniformly $t_i = i$, assuming equal distance between control points. When control point spacing varies (e.g. dense points along curves vs sparse points along lines), $t^3$ acceleration forces the curve to loop and overshoot severely between points.
+
+### Technical Solution
+Replaced uniform Catmull-Rom math with **Centripetal Catmull-Rom Splines** ($\alpha = 0.5$). Knot intervals $t_i$ are calculated using square-root chord lengths:
+
+$$t_i = t_{i-1} + \|P_i - P_{i-1}\|^\alpha = t_{i-1} + \sqrt{\|P_i - P_{i-1}\|}$$
+
+Centripetal parameterization is mathematically proven to be cusp-free, loop-free, and spike-free for any arbitrary control point distribution.
+
+---
+
+## 18. Bug 18: Polyline Array Slice Endpoint Deletion & 166mm Spike Loop
+
+### Symptoms
+Performing a Fillet or Chamfer operation by clicking from top-to-bottom worked, but clicking from bottom-to-top deleted the top line segment and created a $166\text{ mm}$ vertical spike loop extending past the origin.
+
+![Segment Endpoint Deletion and Spike Loop Bug](./assets/18_segment_endpoint_deletion_spike_bug.png)
+
+### Root Cause Analysis
+`applyTwoPointFilletOrChamfer` originally replaced points using `pts.slice(0, minIdx)`. When a point near the start of an open polyline ($V_0$) was selected, `minIdx = 0`, causing `pts.slice(0, 0)` to return `[]` and **delete the outer endpoint $V_0$**. The remaining polyline vertices then connected in reverse order, producing a $166\text{ mm}$ spike loop.
+
+### Technical Solution
+Implemented **Segment-Bounded Polyline Trimming**:
+1. Map selection points $P_1, P_2$ to their containing line segments `seg1` and `seg2`.
+2. Compute `minSeg = Math.min(seg1, seg2)` and `maxSeg = Math.max(seg1, seg2)`.
+3. Construct new polyline preserving outer endpoints:
+
+$$\text{newPts} = \left[ \; \mathbf{pts}[0 \dots \text{minSeg}], \quad \text{replacement}, \quad \mathbf{pts}[(\text{maxSeg} + 1) \dots n-1] \; \right]$$
+
+This guarantees that outer polyline endpoints $V_0$ and $V_{n-1}$ are strictly preserved regardless of selection direction.
+
+
 
 

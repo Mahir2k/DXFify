@@ -35,20 +35,23 @@ The CAD editor provides 25 specialized CAD editing tools divided into four funct
 6. **Add Vertex (`+`)**: Click segment to insert a new vertex handle.
 7. **Delete Vertex (`-`)**: Click vertex handle to remove node and re-connect adjacent segments.
 8. **Split Polyline (`✂`)**: Click polyline segment to break contour into two independent paths.
-9. **Join Polylines (`☍`)**: Click endpoints of two open polylines to merge into a single entity.
-10. **Physical Deformation Brush (`🖌`)**: Deform contours outward against brush boundary.
-11. **Brush Shape Toggle (`●` / `■`)**: Toggle between spherical (Ball) and cubic (Cube) brush geometry.
+9. **Fuse Points (`☍`)**: 2-click tool to merge endpoints or separate polylines into a continuous path (`applyFuseTwoPoints`).
+10. **Fillet Arc (`◜`)**: 2-click tool to round corners with an inward quadratic Bézier curve arc.
+11. **Chamfer Bevel (`◣`)**: 2-click tool to trim corners with a flat bevel segment.
+12. **Centripetal Spline (`~`)**: Multi-click tool generating Centripetal Catmull-Rom B-Spline curves ($\alpha = 0.5$) without overshoot spikes.
+13. **Physical Deformation Brush (`🖌`)**: Deform contours outward against brush boundary.
+14. **Brush Shape Toggle (`●` / `■`)**: Toggle between spherical (Ball) and cubic (Cube) brush geometry.
 
 ### Group 3: Layer & Feature Marking
-12. **Mark Outer Cut (`□`)**: Assign selected outline to `OUTER` layer (Black/White cut path).
-13. **Mark Interior Hole (`○`)**: Assign selected outline to `HOLES` layer (Red interior cut).
-14. **Mark Detail Line (`〰`)**: Assign selected outline to `DETAILS` layer (Green score/engrave line).
-15. **Invert Selection (`⇄`)**: Invert active selection set.
-16. **Delete Entity (`🗑`)**: Remove selected entity from canvas.
+15. **Mark Outer Cut (`□`)**: Assign selected outline to `OUTER` layer (Black/White cut path).
+16. **Mark Interior Hole (`○`)**: Assign selected outline to `HOLES` layer (Red interior cut).
+17. **Mark Detail Line (`〰`)**: Assign selected outline to `DETAILS` layer (Green score/engrave line).
+18. **Invert Selection (`⇄`)**: Invert active selection set.
+19. **Delete Entity (`🗑`)**: Remove selected entity from canvas.
 
 ### Group 4: Measurement & Calibration
-17. **Point-to-Point Distance Ruler (`📏`)**: Click two points to measure real-world distance in millimeters.
-18. **Angle Measurement (`∠`)**: Click three vertices to compute subtended angle in degrees.
-19. **Bounding Box Display (`⤢`)**: Toggle overall $W \times H$ metric bounding box dimensions overlay.
-20. **ArUco Verification (`⯁`)**: Highlight 4 detected corner ArUco marker centers.
-21. **Center Alignment (`✛`)**: Compute geometric centroid of outer boundary.
+20. **Point-to-Point Distance Ruler (`📏`)**: Click two points to measure real-world distance in millimeters.
+21. **Angle Measurement (`∠`)**: Click three vertices to compute subtended angle in degrees.
+22. **Bounding Box Display (`⤢`)**: Toggle overall $W \times H$ metric bounding box dimensions overlay.
+23. **ArUco Verification (`⯁`)**: Highlight 4 detected corner ArUco marker centers.
+24. **Center Alignment (`✛`)**: Compute geometric centroid of outer boundary.

@@ -71,11 +71,13 @@ Given cursor location $\mathbf{c} = (x_c, y_c)^T$ and brush radius $R_{brush}$:
 1. **Ball (Circle) Mode**:
    For each polyline vertex $\mathbf{v}_i = (x_i, y_i)^T$, calculate distance $d = \|\mathbf{v}_i - \mathbf{c}\|_2$.
    If $d < R_{brush}$, displace vertex outward to brush perimeter:
+
    $$\mathbf{v}_i' = \mathbf{c} + R_{brush} \cdot \frac{\mathbf{v}_i - \mathbf{c}}{\|\mathbf{v}_i - \mathbf{c}\|_2}$$
 
 2. **Cube (Square) Mode**:
    Given square half-width $W = R_{brush}$, evaluate axis displacements $\Delta x = x_i - x_c$ and $\Delta y = y_i - y_c$.
    If $|\Delta x| < W$ and $|\Delta y| < W$, project vertex to nearest square edge boundary:
+
    $$\mathbf{v}_i' = \mathbf{c} + \begin{bmatrix} \text{sign}(\Delta x) \cdot W \\ \Delta y \end{bmatrix} \quad \text{if } |\Delta x| > |\Delta y|$$
 
 ### Brush Resizing Interaction

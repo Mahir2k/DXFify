@@ -1,0 +1,8 @@
+[book]
+title = "DXFify Developer & Architecture Documentation"
+authors = ["Skander Jalel Darghouth", "Mahir Ashab Enan"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "book"
