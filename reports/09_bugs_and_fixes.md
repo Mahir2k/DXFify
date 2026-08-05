@@ -333,6 +333,55 @@ $$\text{newPts} = \left[ \; \mathbf{pts}[0 \dots \text{minSeg}], \quad \text{rep
 
 This guarantees that outer polyline endpoints $V_0$ and $V_{n-1}$ are strictly preserved regardless of selection direction.
 
+---
+
+## 19. Bug 19: PyInstaller Matplotlib Backend Discrepancy (`ModuleNotFoundError`)
+
+### Symptoms
+Clicking "Download Printable PDF" in the ArUco Paper Target Generator returned an unhandled server error:
+`{"message": "No module named 'matplotlib.backends.backend_pdf'", "success": false}`
+
+### Root Cause Analysis
+PyInstaller's static import analyzer discovered `matplotlib.backends.backend_agg`, but omitted dynamic backend submodules `matplotlib.backends.backend_pdf` and `matplotlib.backends.backend_svg` because they are imported dynamically at runtime during PDF generation.
+
+### Technical Solution
+Added explicit hidden imports to `desktop/dxfify.spec`:
+```python
+hiddenimports += [
+    'matplotlib.backends.backend_pdf',
+    'matplotlib.backends.backend_agg',
+    'matplotlib.backends.backend_svg',
+]
+```
+
+---
+
+## 20. Bug 20: Desktop pywebview Blob Download Failure
+
+### Symptoms
+Clicking "Download DXF", "Export SVG", or "Export PDF" created blob URLs in JavaScript (`blob:http://...`) and called `a.click()`, but produced no output files in desktop mode.
+
+### Root Cause Analysis
+In `pywebview` / QtWebEngine, clicking `<a download>` on `blob:` URLs is ignored because QtWebEngine does not attach an automatic browser download manager for Blob URLs.
+
+### Technical Solution
+1. Implemented `/api/save-file` backend endpoint in `desktop_server.py`.
+2. Created `fileSaver.ts` utility using `FileReader.readAsDataURL` to safely convert files to Base64 without call stack or memory limitations.
+3. Updated all export handlers in `App.tsx` and `ArtifactList.tsx` to route file saving through `/api/save-file`, writing directly to `~/Downloads`.
+
+---
+
+## 21. Bug 21: Stringified alert() Formatting in Native Qt Dialogs
+
+### Symptoms
+Calling `alert()` in pywebview generated a native Qt message box with raw double quotes and escaped `\n` characters (e.g. `"\u2713 Saved to:\n/home/..."`).
+
+### Root Cause Analysis
+`pywebview` stringifies `window.alert()` arguments via JSON IPC before passing them to PyQt's `QMessageBox.information`, turning newlines into literal `\n` and wrapping the message in double quotes.
+
+### Technical Solution
+Replaced system `alert()` popups with a native React `ToastNotification` component and in-modal status banners, providing sleek visual status updates in the UI.
+
 
 
 

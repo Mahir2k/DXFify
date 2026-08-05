@@ -107,17 +107,37 @@ sys.stderr.reconfigure(line_buffering=True) if hasattr(sys.stderr, 'reconfigure'
 
 ---
 
-## 4. Standalone Binary Packaging & Execution
+### 4. Cross-Platform Engine & Native File Persistence
+
+To ensure full operational parity across **Linux**, **macOS**, and **Windows**, the desktop architecture incorporates dynamic platform detection and native file management:
+
+1. **Auto-Selected Native GUI Backends (`main.py`)**:
+   - **Linux**: Selects `PyQt6 WebEngine` (`gui="qt"`). Scopes Qt-specific Chromium GPU hardware acceleration flags (`QTWEBENGINE_CHROMIUM_FLAGS`) to Linux execution.
+   - **macOS**: Selects native `Cocoa WebKit` (`gui="cocoa"`).
+   - **Windows**: Auto-selects native `EdgeChromium` (`gui=None`), eliminating external Qt dependencies on Windows.
+
+2. **Platform-Aware Downloads Path (`_get_downloads_dir()`)**:
+   - **Windows**: Resolves localized system Downloads paths using Windows `KNOWNFOLDERID` via `ctypes.windll.shell32.SHGetKnownFolderPath`.
+   - **Linux**: Reads `XDG_DOWNLOAD_DIR` from `~/.config/user-dirs.dirs` with fallback to `~/Downloads`.
+   - **macOS**: Resolves standard `~/Downloads`.
+
+3. **Thread-Safe Desktop File Persistence (`/api/save-file`)**:
+   - Eliminates pywebview `<a download>` blob click failures by routing export files directly through `/api/save-file`.
+   - Converts client blobs to Base64 using non-blocking native `FileReader.readAsDataURL` (preventing stack overflow errors on large vector files).
+   - Displays real-time, in-app toast notifications upon file save completion.
+
+---
+
+## 5. Standalone Binary Packaging & Execution
 
 ### Compilation Command
 ```bash
-cd dxferpy
-venv/bin/pyinstaller --noconfirm ../desktop/dxfify.spec
+dxferpy/venv/bin/pyinstaller --noconfirm desktop/dxfify.spec
 ```
 
 ### Binary Output Location
 ```
-dxferpy/dist/dxfify/
+dist/dxfify/
 ├── dxfify                       # Standalone executable binary (~78MB)
 ├── _internal/                  # Bundled PyTorch, OpenCV, PyQt6 & web/dist assets
 └── samples/                    # Calibration target sheet samples
@@ -125,17 +145,19 @@ dxferpy/dist/dxfify/
 
 ### Execution Command
 ```bash
-./dxferpy/dist/dxfify/dxfify
+./dist/dxfify/dxfify            # Linux / macOS
+dist\dxfify\dxfify.exe          # Windows
 ```
 
 ---
 
-## 5. Verification & Performance Benchmarks
+## 6. Verification & Performance Benchmarks
 
 | Metric / Benchmark | Web Server + Browser | Native Standalone Binary (`dxfify`) |
 | :--- | :--- | :--- |
 | **External Browser Requirement** | Chrome / Firefox required | **Zero browser required** (Native window) |
 | **Node.js / Express Dependency** | Required | **Eliminated** (Embedded Python Flask server) |
+| **Cross-Platform Support** | Linux / Mac / Windows | **Linux (Qt), macOS (Cocoa), Windows (Edge)** |
 | **Application Launch Time** | ~2.5s (Vite + Node startup) | **< 300ms** (Instant pywebview launch) |
 | **Vectorization Latency (Cached)**| ~1.4s | **~1.2s** (RAM-cached ONNX session) |
 | **Canvas Frame Rate** | 60 FPS | **60 FPS** (Chromium GPU accelerated) |
