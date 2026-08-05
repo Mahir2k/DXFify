@@ -96,7 +96,24 @@ Where $\Delta_{contour} \approx 0.05\text{ mm}$ accounts for sub-pixel contour q
 
 ---
 
-## 5. Physical Setup Guidelines
+---
+
+## 6. On-Demand ArUco Target Paper Generator (`dxferpy/generate_aruco_paper.py`)
+
+To eliminate manual sheet preparation and provide instant access to printable calibration targets, DXFify incorporates an **On-Demand ArUco Calibration Target Generator** accessible via the UI (`ArucoPaperGeneratorModal.tsx`) and HTTP API (`/api/generate-aruco-paper`).
+
+### Architectural Capabilities
+- **Standard Presets**: Instant generation for `A4`, `A3`, `A5`, `Letter`, `Legal`.
+- **Custom Paper Dimensions**: Accepts arbitrary width $\times$ height ($W_{mm} \times H_{mm}$) for non-standard paper stock or large-format laser cutter beds (e.g. $500 \times 500\text{ mm}$).
+- **Orientation Control**: Toggle between `Portrait` and `Landscape` modes.
+- **Parametric Marker Customization**:
+  - `marker_size_mm`: Adjustable marker width ($15\text{--}80\text{ mm}$, default $30\text{ mm}$).
+  - `margin_x_mm` & `margin_y_mm`: Corner center offsets from page boundaries.
+- **Metric Scale Ruler Integration**: Generates millimeter and centimeter tick marks along the bottom and left borders.
+- **Multi-Format Export**:
+  - **Vector PDF (`.pdf`)**: Native 300 DPI vector PDF document generated via Matplotlib vector engine for lossless printing.
+  - **Scalable Vector Graphics (`.svg`)**: 1:1 metric SVG markup string for web canvas preview and vector graphics software.
+
 
 For maximum conversion accuracy, physical capture should adhere to the following setup parameters:
 

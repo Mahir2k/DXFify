@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ConversionApiError, runConversion } from './api/convertClient';
 import { TopBar } from './components/TopBar';
 import { Workspace } from './components/Workspace';
+import { ArucoPaperGeneratorModal } from './components/ArucoPaperGeneratorModal';
 import { computeBoundingBox } from './utils/geometryUtils';
 import type {
   ConversionErrorDetails,
@@ -254,6 +255,7 @@ export default function App() {
   const [showSubRegionModal, setShowSubRegionModal] = useState(false);
   const [subRegionStrategy, setSubRegionStrategy] = useState<'current' | 'pratt' | 'spline' | 'gaussian' | 'ransac'>('ransac');
   const [isProcessingSubRegion, setIsProcessingSubRegion] = useState(false);
+  const [isArucoModalOpen, setIsArucoModalOpen] = useState(false);
 
   
   const [gridEnabled, setGridEnabled] = useState(true);
@@ -508,6 +510,7 @@ export default function App() {
         onDownload={handleDownloadDxf}
         onExportSvg={handleDownloadSvg}
         onExportPdf={handleDownloadPdf}
+        onOpenArucoGenerator={() => setIsArucoModalOpen(true)}
       />
 
       <Workspace
@@ -743,6 +746,11 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <ArucoPaperGeneratorModal
+        isOpen={isArucoModalOpen}
+        onClose={() => setIsArucoModalOpen(false)}
+      />
     </main>
   );
 }

@@ -41,6 +41,7 @@ export interface TopBarProps {
   onDownload?: () => void;
   onExportSvg?: () => void;
   onExportPdf?: () => void;
+  onOpenArucoGenerator?: () => void;
 }
 
 
@@ -77,6 +78,7 @@ export function TopBar(props: TopBarProps) {
     onDownload,
     onExportSvg,
     onExportPdf,
+    onOpenArucoGenerator,
   } = props;
 
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -180,6 +182,8 @@ export function TopBar(props: TopBarProps) {
     File: [
       { label: 'Upload Image…', action: () => fileInputRef.current?.click(), shortcut: 'Ctrl+O' },
       { label: isConverting ? 'Running…' : 'Run Conversion', action: onRun, disabled: !canRun || isConverting, shortcut: 'Ctrl+Enter' },
+      SEP,
+      { label: '🖨 ArUco Paper Generator…', action: onOpenArucoGenerator, shortcut: 'Ctrl+Shift+P' },
       SEP,
       {
         label: 'Download DXF',

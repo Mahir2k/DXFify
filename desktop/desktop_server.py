@@ -8,7 +8,7 @@ import time
 import uuid
 from typing import Any, Dict
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 # Configure unbuffered stdout logging for real-time terminal diagnostics
 logging.basicConfig(
@@ -234,6 +234,64 @@ def convert_region():
     except Exception as err:
         logger.error(f"[API /convert-region ERROR] {err}", exc_info=True)
         sys.stdout.flush()
+        return jsonify({"success": False, "message": str(err)}), 500
+
+
+@app.route("/api/generate-aruco-paper", methods=["GET", "POST"])
+def generate_aruco_paper_route():
+    """API endpoint to generate printable ArUco calibration paper (PDF/SVG)."""
+    try:
+        from generate_aruco_paper import generate_aruco_svg, generate_aruco_paper_pdf
+
+        if request.method == "POST" and request.is_json:
+            data = request.get_json() or {}
+        else:
+            data = request.args.to_dict()
+
+        paper_type = data.get("paper_type", "A4")
+        custom_w = float(data.get("custom_w", 210.0))
+        custom_h = float(data.get("custom_h", 297.0))
+        orientation = data.get("orientation", "portrait")
+        marker_size_mm = float(data.get("marker_size_mm", 30.0))
+        margin_x_mm = float(data.get("margin_x_mm", 32.2))
+        margin_y_mm = float(data.get("margin_y_mm", 34.2))
+        show_ruler = str(data.get("show_ruler", "true")).lower() in ["true", "1", "yes"]
+        fmt = data.get("format", "pdf").lower()
+
+        if fmt == "svg":
+            svg_str = generate_aruco_svg(
+                paper_type=paper_type,
+                custom_w=custom_w,
+                custom_h=custom_h,
+                orientation=orientation,
+                marker_size_mm=marker_size_mm,
+                margin_x_mm=margin_x_mm,
+                margin_y_mm=margin_y_mm,
+                show_ruler=show_ruler,
+            )
+            return Response(
+                svg_str,
+                mimetype="image/svg+xml",
+                headers={"Content-Disposition": f'inline; filename="dxfify_aruco_{paper_type}.svg"'},
+            )
+        else:
+            pdf_bytes = generate_aruco_paper_pdf(
+                paper_type=paper_type,
+                custom_w=custom_w,
+                custom_h=custom_h,
+                orientation=orientation,
+                marker_size_mm=marker_size_mm,
+                margin_x_mm=margin_x_mm,
+                margin_y_mm=margin_y_mm,
+                show_ruler=show_ruler,
+            )
+            return Response(
+                pdf_bytes,
+                mimetype="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="dxfify_aruco_{paper_type}.pdf"'},
+            )
+    except Exception as err:
+        logger.error(f"[API /generate-aruco-paper ERROR] {err}", exc_info=True)
         return jsonify({"success": False, "message": str(err)}), 500
 
 
