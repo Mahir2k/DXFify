@@ -183,7 +183,7 @@ export function TopBar(props: TopBarProps) {
       { label: 'Upload Image…', action: () => fileInputRef.current?.click(), shortcut: 'Ctrl+O' },
       { label: isConverting ? 'Running…' : 'Run Conversion', action: onRun, disabled: !canRun || isConverting, shortcut: 'Ctrl+Enter' },
       SEP,
-      { label: '🖨 ArUco Paper Generator…', action: onOpenArucoGenerator, shortcut: 'Ctrl+Shift+P' },
+      { label: 'ArUco Paper Target Generator…', action: onOpenArucoGenerator, shortcut: 'Ctrl+Shift+P' },
       SEP,
       {
         label: 'Download DXF',
