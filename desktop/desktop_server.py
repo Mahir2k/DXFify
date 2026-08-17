@@ -384,6 +384,72 @@ def generate_aruco_paper_route():
         return jsonify({"success": False, "message": str(err)}), 500
 
 
+def _ask_save_path(default_filename: str) -> Optional[str]:
+    """Opens a native OS Save File As picker dialog.
+    
+    Returns the chosen destination file path string, or None if the user cancels.
+    """
+    ext = os.path.splitext(default_filename)[1].lower()
+
+    # 1. Try pywebview's native file dialog if pywebview window is active
+    try:
+        import webview
+        if webview.windows and len(webview.windows) > 0:
+            win = webview.windows[0]
+            file_types = ("All Files (*.*)", "*.*")
+            if ext == ".dxf":
+                file_types = ("DXF Drawings (*.dxf)", "All Files (*.*)")
+            elif ext == ".svg":
+                file_types = ("SVG Vector Graphics (*.svg)", "All Files (*.*)")
+            elif ext == ".pdf":
+                file_types = ("PDF Documents (*.pdf)", "All Files (*.*)")
+
+            result = win.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=default_filename,
+                file_types=file_types
+            )
+            if result:
+                if isinstance(result, (tuple, list)):
+                    return result[0] if len(result) > 0 else None
+                return str(result)
+            return None
+    except Exception as e:
+        logger.warning(f"pywebview save dialog failed: {e}, attempting tkinter fallback...")
+
+    # 2. Fallback using tkinter filedialog (cross-platform: Windows/Linux/macOS)
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        
+        initial_dir = _get_downloads_dir()
+        filetypes = [("All Files", "*.*")]
+        if ext == ".dxf":
+            filetypes = [("DXF Drawings", "*.dxf"), ("All Files", "*.*")]
+        elif ext == ".svg":
+            filetypes = [("SVG Vector Graphics", "*.svg"), ("All Files", "*.*")]
+        elif ext == ".pdf":
+            filetypes = [("PDF Documents", "*.pdf"), ("All Files", "*.*")]
+
+        chosen = filedialog.asksaveasfilename(
+            initialdir=initial_dir,
+            initialfile=default_filename,
+            defaultextension=ext,
+            filetypes=filetypes,
+            title="Save File As"
+        )
+        root.destroy()
+        return chosen if chosen else None
+    except Exception as e:
+        logger.error(f"tkinter save dialog failed: {e}")
+        downloads_dir = _get_downloads_dir()
+        os.makedirs(downloads_dir, exist_ok=True)
+        return os.path.join(downloads_dir, default_filename)
+
+
 @app.route("/api/save-aruco-paper", methods=["GET", "POST"])
 def save_aruco_paper_route():
     """Generate ArUco paper and save to a user-chosen file location."""
@@ -409,10 +475,14 @@ def save_aruco_paper_route():
 
         default_name = f"dxfify_aruco_{paper_type}_{orientation}.{fmt}"
 
-        # Cross-platform Downloads folder detection
-        downloads_dir = _get_downloads_dir()
-        os.makedirs(downloads_dir, exist_ok=True)
-        save_path = os.path.join(downloads_dir, default_name)
+        save_path = _ask_save_path(default_name)
+        if not save_path:
+            logger.info(f"[save-aruco-paper] Save dialog cancelled by user for {default_name}")
+            return jsonify({"success": False, "cancelled": True, "message": "Save operation cancelled."})
+
+        dest_dir = os.path.dirname(save_path)
+        if dest_dir:
+            os.makedirs(dest_dir, exist_ok=True)
 
         if fmt == "svg":
             content = generate_aruco_svg(
@@ -444,7 +514,7 @@ def save_aruco_paper_route():
                 f.write(content)
 
         logger.info(f"[save-aruco-paper] Saved {fmt.upper()} to: {save_path}")
-        return jsonify({"success": True, "message": f"Saved to {save_path}", "path": save_path, "filename": default_name})
+        return jsonify({"success": True, "message": f"Saved to {save_path}", "path": save_path, "filename": os.path.basename(save_path)})
 
     except Exception as err:
         logger.error(f"[API /save-aruco-paper ERROR] {err}", exc_info=True)
@@ -453,16 +523,21 @@ def save_aruco_paper_route():
 
 @app.route("/api/save-file", methods=["POST"])
 def save_file_route():
-    """Generic endpoint to save text or binary (base64) files to user's Downloads folder."""
+    """Generic endpoint to save text or binary (base64) files using a native Save File As picker dialog."""
     try:
         data = request.get_json() or {}
-        filename = data.get("filename", "export.file")
+        filename = data.get("filename", "export.dxf")
         content = data.get("content", "")
         is_base64 = data.get("isBase64", False)
 
-        downloads_dir = _get_downloads_dir()
-        os.makedirs(downloads_dir, exist_ok=True)
-        save_path = os.path.join(downloads_dir, filename)
+        save_path = _ask_save_path(filename)
+        if not save_path:
+            logger.info(f"[save-file] Save dialog cancelled by user for {filename}")
+            return jsonify({"success": False, "cancelled": True, "message": "Save operation cancelled."})
+
+        dest_dir = os.path.dirname(save_path)
+        if dest_dir:
+            os.makedirs(dest_dir, exist_ok=True)
 
         if is_base64:
             import base64
@@ -474,7 +549,7 @@ def save_file_route():
                 f.write(content)
 
         logger.info(f"[save-file] Saved {filename} to: {save_path}")
-        return jsonify({"success": True, "message": f"Saved to {save_path}", "path": save_path, "filename": filename})
+        return jsonify({"success": True, "message": f"Saved to {save_path}", "path": save_path, "filename": os.path.basename(save_path)})
     except Exception as err:
         logger.error(f"[API /save-file ERROR] {err}", exc_info=True)
         return jsonify({"success": False, "message": str(err)}), 500

@@ -96,12 +96,10 @@ export const ArucoPaperGeneratorModal: React.FC<Props> = ({ isOpen, onClose, onS
         const msg = `Saved ${result.filename || 'ArUco target'} to ${result.path}`;
         setStatusMessage(msg);
         onShowToast?.(msg, 'success');
-      } else {
-        if (result.message !== 'Save cancelled by user') {
-          const msg = `Save failed: ${result.message}`;
-          setStatusMessage(msg);
-          onShowToast?.(msg, 'error');
-        }
+      } else if (!result.cancelled) {
+        const msg = `Save failed: ${result.message}`;
+        setStatusMessage(msg);
+        onShowToast?.(msg, 'error');
       }
     } catch (err) {
       console.error('Save error:', err);

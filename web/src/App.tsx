@@ -457,7 +457,7 @@ export default function App() {
       const res = await saveFileToDisk(filename, dxfText, false);
       if (res.success && res.message) {
         showToast(res.message, 'success');
-      } else {
+      } else if (!res.cancelled) {
         showToast(res.message || 'Failed to save DXF', 'error');
       }
       return;
@@ -466,8 +466,10 @@ export default function App() {
       const res = await saveUrlToDisk(conversionResult.files.dxf, filename);
       if (res.success && res.message) {
         showToast(res.message, 'success');
-        return;
+      } else if (!res.cancelled) {
+        showToast(res.message || 'Failed to save DXF', 'error');
       }
+      return;
     }
     showToast('No conversion result or geometry available to export.', 'error');
   };
@@ -479,7 +481,7 @@ export default function App() {
       const res = await saveFileToDisk(filename, svgText, false);
       if (res.success && res.message) {
         showToast(res.message, 'success');
-      } else {
+      } else if (!res.cancelled) {
         showToast(res.message || 'Failed to save SVG', 'error');
       }
     } else {
@@ -494,7 +496,7 @@ export default function App() {
       const res = await saveFileToDisk(filename, pdfBlob, true);
       if (res.success && res.message) {
         showToast(res.message, 'success');
-      } else {
+      } else if (!res.cancelled) {
         showToast(res.message || 'Failed to save PDF', 'error');
       }
     } else {

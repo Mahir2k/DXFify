@@ -30,7 +30,7 @@ export function ArtifactList({ result, onShowToast, onDownloadDxf }: ArtifactLis
     const res = await saveUrlToDisk(url, filename);
     if (res.success && res.message) {
       onShowToast?.(res.message, 'success');
-    } else {
+    } else if (!res.cancelled) {
       onShowToast?.(res.message || 'Download failed', 'error');
     }
   };

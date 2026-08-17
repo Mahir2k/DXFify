@@ -7,7 +7,7 @@ export async function saveFileToDisk(
   filename: string,
   content: string | Blob,
   isBase64: boolean = false
-): Promise<{ success: boolean; path?: string; message?: string }> {
+): Promise<{ success: boolean; path?: string; message?: string; cancelled?: boolean }> {
   try {
     let payloadContent = '';
     let payloadBase64 = isBase64;
@@ -40,15 +40,44 @@ export async function saveFileToDisk(
 
     if (res.ok) {
       const data = await res.json();
+      if (data.cancelled) {
+        return { success: false, cancelled: true, message: 'Save operation cancelled.' };
+      }
       if (data.success) {
-        return { success: true, path: data.path, message: `Saved ${filename} to ${data.path}` };
+        return { success: true, path: data.path, message: `Saved to ${data.path}` };
       }
     }
   } catch (err) {
-    console.warn('Backend save-file endpoint unavailable, falling back to browser download link', err);
+    console.warn('Backend save-file endpoint unavailable, falling back to browser save picker', err);
   }
 
-  // Fallback for standard web browser environment
+  // Native Browser Save File Picker fallback using File System Access API
+  if ('showSaveFilePicker' in window) {
+    try {
+      const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+      const mimeType = ext === '.dxf' ? 'application/dxf' : ext === '.svg' ? 'image/svg+xml' : ext === '.pdf' ? 'application/pdf' : 'application/octet-stream';
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: filename,
+        types: [
+          {
+            description: ext === '.dxf' ? 'DXF Drawing' : ext === '.svg' ? 'SVG Vector Graphic' : ext === '.pdf' ? 'PDF Document' : 'File',
+            accept: { [mimeType]: [ext] },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+      await writable.write(blob);
+      await writable.close();
+      return { success: true, message: `Saved ${filename}` };
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return { success: false, cancelled: true, message: 'Save operation cancelled.' };
+      }
+    }
+  }
+
+  // Standard legacy browser download link fallback
   try {
     const blob = content instanceof Blob ? content : new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -68,7 +97,7 @@ export async function saveFileToDisk(
 export async function saveUrlToDisk(
   url: string,
   filename: string
-): Promise<{ success: boolean; path?: string; message?: string }> {
+): Promise<{ success: boolean; path?: string; message?: string; cancelled?: boolean }> {
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error('Fetch failed');
