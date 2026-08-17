@@ -194,14 +194,25 @@ def convert():
         mask_threshold = int(request.form.get("maskThreshold", 240))
         erosion_kernel = int(request.form.get("erosionKernel", 3))
         erosion_iterations = int(request.form.get("erosionIterations", 1))
+        min_hole_area = int(request.form.get("minHoleArea", 500))
+        min_outer_area = int(request.form.get("minOuterArea", 100))
+        circle_ratio = float(request.form.get("circleRatio", 0.85))
         epsilon_min = float(request.form.get("epsilonMin", 0.5))
         epsilon_max = float(request.form.get("epsilonMax", 2.5))
+        snap_angle = float(request.form.get("snapAngle", 10.0))
+        snap_min_length = float(request.form.get("snapMinLength", 20.0))
+        marker_offset_x = float(request.form.get("markerOffsetX", 32.2))
+        marker_offset_y = float(request.form.get("markerOffsetY", 34.2))
+        marker_clear_radius = float(request.form.get("markerClearRadius", 22.0))
+        calibration_scale = float(request.form.get("calibrationScale", 1.0))
         curve_strategy = request.form.get("curveStrategy", "current")
         detect_details = request.form.get("detectDetails", "false").lower() in ("true", "1")
+        details_threshold1 = int(request.form.get("detailsThreshold1", 50))
+        details_threshold2 = int(request.form.get("detailsThreshold2", 150))
 
         logger.info(
             f"[API /convert] Image: '{file.filename}' | Job: {job_id} | Paper: {sheet_size.upper()} | "
-            f"Thresh: {mask_threshold} | Kernel: {erosion_kernel} | Strategy: {curve_strategy}"
+            f"Thresh: {mask_threshold} | Kernel: {erosion_kernel} | Scale: {calibration_scale} | Strategy: {curve_strategy}"
         )
         sys.stdout.flush()
 
@@ -215,10 +226,21 @@ def convert():
             mask_threshold=mask_threshold,
             erosion_kernel=erosion_kernel,
             erosion_iterations=erosion_iterations,
+            min_hole_area=min_hole_area,
+            min_outer_area=min_outer_area,
+            circle_ratio=circle_ratio,
             epsilon_min=epsilon_min,
             epsilon_max=epsilon_max,
+            snap_angle=snap_angle,
+            snap_min_length=snap_min_length,
+            marker_offset_x=marker_offset_x,
+            marker_offset_y=marker_offset_y,
+            marker_clear_radius=marker_clear_radius,
+            calibration_scale=calibration_scale,
             curve_strategy=curve_strategy,
             detect_details=detect_details,
+            details_threshold1=details_threshold1,
+            details_threshold2=details_threshold2,
             custom_w_mm=custom_w_mm,
             custom_h_mm=custom_h_mm,
         )

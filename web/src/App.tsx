@@ -452,13 +452,6 @@ export default function App() {
 
   const handleDownloadDxf = async () => {
     const filename = uploadedFile ? `${uploadedFile.name.replace(/\.[^/.]+$/, '')}.dxf` : 'result.dxf';
-    if (conversionResult?.files?.dxf) {
-      const res = await saveUrlToDisk(conversionResult.files.dxf, filename);
-      if (res.success && res.message) {
-        showToast(res.message, 'success');
-        return;
-      }
-    }
     if (entities.length > 0) {
       const dxfText = generateDxfString(entities);
       const res = await saveFileToDisk(filename, dxfText, false);
@@ -467,9 +460,16 @@ export default function App() {
       } else {
         showToast(res.message || 'Failed to save DXF', 'error');
       }
-    } else {
-      showToast('No conversion result or geometry available to export.', 'error');
+      return;
     }
+    if (conversionResult?.files?.dxf) {
+      const res = await saveUrlToDisk(conversionResult.files.dxf, filename);
+      if (res.success && res.message) {
+        showToast(res.message, 'success');
+        return;
+      }
+    }
+    showToast('No conversion result or geometry available to export.', 'error');
   };
 
   const handleDownloadSvg = async () => {
@@ -574,6 +574,7 @@ export default function App() {
         onActiveDrawingChange={setActiveDrawing}
         activeHoverSource={activeHoverSource}
         onHoverSourceChange={setActiveHoverSource}
+        onDownloadDxf={handleDownloadDxf}
       />
 
       {showSubRegionModal && subRegionBbox && (

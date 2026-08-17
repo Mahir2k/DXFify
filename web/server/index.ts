@@ -327,6 +327,7 @@ app.post('/api/convert', upload.single('image'), async (req: Request, res: Respo
         'markerOffsetX',
         'markerOffsetY',
         'markerClearRadius',
+        'calibrationScale',
         'detailsThreshold1',
         'detailsThreshold2',
       ] as const;

@@ -440,6 +440,7 @@ def vectorize_single_image(
     details_threshold1: int = 50,
     details_threshold2: int = 150,
     curve_strategy: str = "current",
+    calibration_scale: float = 1.0,
 ) -> dict:
     """Extracts vector geometry entities from binary mask and saves DXF file.
 
@@ -465,6 +466,8 @@ def vectorize_single_image(
         Dictionary report containing entity metrics, bounding box dimensions, and entity array.
     """
     height = mask.shape[0]
+    eff_scale = scale / (calibration_scale if (calibration_scale and calibration_scale > 0) else 1.0)
+    scale = eff_scale
 
     contours, hierarchy = cv2.findContours(mask, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
 
@@ -642,6 +645,7 @@ def run_pipeline(
     marker_offset_x: float = 32.2,
     marker_offset_y: float = 34.2,
     marker_clear_radius: float = 22.0,
+    calibration_scale: float = 1.0,
     detect_details: bool = False,
     details_threshold1: int = 50,
     details_threshold2: int = 150,
@@ -765,6 +769,7 @@ def run_pipeline(
         details_threshold1=details_threshold1,
         details_threshold2=details_threshold2,
         curve_strategy=curve_strategy,
+        calibration_scale=calibration_scale,
     )
     report["markerCenters"] = marker_centers
 
@@ -807,6 +812,7 @@ def process():
         "markerOffsetX": ("marker_offset_x", float, 32.2),
         "markerOffsetY": ("marker_offset_y", float, 34.2),
         "markerClearRadius": ("marker_clear_radius", float, 22.0),
+        "calibrationScale": ("calibration_scale", float, 1.0),
         "detectDetails": ("detect_details", lambda v: str(v).lower() in ("true", "1", "yes"), False),
         "detailsThreshold1": ("details_threshold1", int, 50),
         "detailsThreshold2": ("details_threshold2", int, 150),

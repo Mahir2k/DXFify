@@ -53,6 +53,7 @@ interface WorkspaceProps {
   activeHoverSource?: 'dxf' | 'image' | null;
   onHoverSourceChange?: (source: 'dxf' | 'image' | null) => void;
   onShowToast?: (message: string, type?: 'success' | 'error') => void;
+  onDownloadDxf?: () => void;
 }
 
 export function Workspace({
@@ -93,6 +94,7 @@ export function Workspace({
   activeHoverSource = null,
   onHoverSourceChange,
   onShowToast,
+  onDownloadDxf,
 }: WorkspaceProps) {
   
   const [toolboxWidth, setToolboxWidth] = useState(72);
@@ -231,7 +233,7 @@ export function Workspace({
           />
           <ReportPanel result={result} error={reportError} />
           <SettingsPanel settings={settings} onChange={onSettingsChange} />
-          <ArtifactList result={result} onShowToast={onShowToast} />
+          <ArtifactList result={result} onShowToast={onShowToast} onDownloadDxf={onDownloadDxf} />
         </div>
       )}
     </section>

@@ -38,6 +38,7 @@ const ARUCO_PARAMS: ParamDef[] = [
   { key: 'markerOffsetX',    label: 'Marker offset X (mm)',   placeholder: '32.2', min: 0, max: 100, step: 0.1 },
   { key: 'markerOffsetY',    label: 'Marker offset Y (mm)',   placeholder: '34.2', min: 0, max: 100, step: 0.1 },
   { key: 'markerClearRadius', label: 'Marker clear radius (mm)', placeholder: '22', min: 0, max: 60,  step: 0.5 },
+  { key: 'calibrationScale', label: 'Metric scale multiplier', placeholder: '1.0', min: 0.5, max: 2.0, step: 0.001 },
 ];
 
 const DETAILS_PARAMS: ParamDef[] = [

@@ -60,6 +60,7 @@ export interface ConversionSettings {
   markerOffsetX?: number;
   markerOffsetY?: number;
   markerClearRadius?: number;
+  calibrationScale?: number; // Metric scale multiplier (default 1.0)
   // Detail extraction
   detectDetails?: boolean; // default false
   detailsThreshold1?: number; // default 50
